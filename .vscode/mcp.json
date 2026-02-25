@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "copilotPromptRefiner": {
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/run_mcp_server.sh"
+      ]
+    }
+  }
+}

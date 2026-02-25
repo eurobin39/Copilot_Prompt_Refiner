@@ -1,0 +1,14 @@
+[
+  {
+    "role": "user",
+    "content": "Deployment failed after release."
+  },
+  {
+    "role": "assistant",
+    "content": "The deployment failed. Please check server logs."
+  },
+  {
+    "role": "tool",
+    "content": "db migration status: pending"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "copilotPromptRefinerRemote": {
+      "type": "http",
+      "url": "https://YOUR_DOMAIN/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:MCP_API_TOKEN}"
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copilot-prompt-refiner"
+version = "0.1.0"
+description = "Plug-and-play prompt refinement and evaluation framework with MCP tools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Copilot Prompt Refiner Team" }]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.6.0"]
+dev = ["pytest>=8.2", "ruff>=0.6"]
+
+[project.scripts]
+prompt-refiner = "copilot_prompt_refiner.cli:main"
+prompt-refiner-mcp = "copilot_prompt_refiner.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copilot_prompt_refiner"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

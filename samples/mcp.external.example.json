@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "copilotPromptRefiner": {
+      "command": "/ABSOLUTE/PATH/TO/Copilot_Prompt_Refiner/scripts/run_mcp_server.sh",
+      "args": []
+    }
+  }
+}

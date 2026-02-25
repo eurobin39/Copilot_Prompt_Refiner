@@ -1,0 +1,20 @@
+{
+  "payload_input": {
+    "user_input": "Please improve the system prompts for Resume Assistant agents: 1) resume_info_collector, 2) resume_job_analyzer, 3) resume_writer, 4) resume_reviewer.",
+    "context": {
+      "project": "Resume Assistant",
+      "agent_types": [
+        "resume_info_collector",
+        "resume_job_analyzer",
+        "resume_writer",
+        "resume_reviewer"
+      ],
+      "current_system_prompts": {
+        "resume_info_collector": "You are an expert Resume Information Collector. Extract user details into a STRICT JSON OBJECT and nothing else.",
+        "resume_job_analyzer": "You are an expert Job Analyst. Analyze the JD and output a STRICT JSON summary.",
+        "resume_writer": "You are an expert Resume Writer. Write a professional resume in LaTeX format (plain LaTeX, no Markdown).",
+        "resume_reviewer": "You are an expert Resume Reviewer and Career Coach. Analyze the provided resume against the job requirements and give actionable feedback."
+      }
+    }
+  }
+}
