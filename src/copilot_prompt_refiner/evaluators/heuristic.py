@@ -7,6 +7,11 @@ from copilot_prompt_refiner.models import AgentCase, EvaluatorScore
 
 
 def _tokenize(text: str) -> set[str]:
+    """Tokenize text into lowercase alphanumeric units for overlap scoring.
+
+    Very short tokens are excluded to reduce noise from punctuation and common
+    short words when computing similarity metrics.
+    """
     return {
         token
         for token in re.findall(r"[a-zA-Z0-9_]+", text.lower())
@@ -15,6 +20,11 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _jaccard(a: str, b: str) -> float:
+    """Compute simple Jaccard overlap between token sets.
+
+    This lightweight metric provides a deterministic proxy for semantic
+    alignment when no embedding model is available.
+    """
     left = _tokenize(a)
     right = _tokenize(b)
     if not left or not right:
@@ -23,11 +33,22 @@ def _jaccard(a: str, b: str) -> float:
 
 
 class PromptStructureEvaluator(Evaluator):
+    """Heuristic evaluator for prompt structure completeness.
+
+    It checks presence of critical instruction sections that strongly correlate
+    with reliable agent behavior in downstream workflows.
+    """
+
     name = "prompt_structure"
     metric = "instruction_structure"
     weight = 1.0
 
     def evaluate(self, case: AgentCase, candidate_prompt: str) -> EvaluatorScore:
+        """Score whether required structural instruction sections are present.
+
+        Missing sections are reported in reasoning so Refine can target specific
+        prompt areas instead of rewriting the full instruction set.
+        """
         checks = {
             "role": ["you are", "role", "agent"],
             "constraints": ["must", "must not", "do not", "never"],
@@ -61,11 +82,22 @@ class PromptStructureEvaluator(Evaluator):
 
 
 class GroundTruthAlignmentEvaluator(Evaluator):
+    """Heuristic evaluator for output-ground-truth alignment strength.
+
+    It compares last assistant output with provided ground truth, returning
+    neutral fallbacks when evidence is missing.
+    """
+
     name = "ground_truth_alignment"
     metric = "output_to_ground_truth_similarity"
     weight = 1.2
 
     def evaluate(self, case: AgentCase, candidate_prompt: str) -> EvaluatorScore:
+        """Score alignment between assistant output logs and ground truth text.
+
+        The metric is intentionally simple and deterministic so it can run in
+        restricted environments without external model dependencies.
+        """
         if not case.ground_truth:
             return EvaluatorScore(
                 evaluator=self.name,
@@ -102,11 +134,22 @@ class GroundTruthAlignmentEvaluator(Evaluator):
 
 
 class ToolUsageEvaluator(Evaluator):
+    """Heuristic evaluator for tool-policy coverage in prompt and logs.
+
+    It rewards consistency between declared tool guidance and observed tool-call
+    behavior, and penalizes mismatches that imply unreliable execution policy.
+    """
+
     name = "tool_usage"
     metric = "tool_policy_coverage"
     weight = 0.8
 
     def evaluate(self, case: AgentCase, candidate_prompt: str) -> EvaluatorScore:
+        """Score tool-usage reliability from prompt text and message logs.
+
+        This helps the Judge detect when tool invocation patterns are present
+        but not reflected in explicit system-prompt constraints.
+        """
         prompt_mentions_tools = any(
             key in candidate_prompt.lower() for key in ["tool", "mcp", "function", "api"]
         )

@@ -6,12 +6,22 @@ from pathlib import Path
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
+    """Parse env-like boolean text with a safe default.
+
+    Accepts common truthy forms so deployment environments can use flexible
+    variable conventions without custom parsing in callers.
+    """
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _as_csv(value: str | None, default: list[str]) -> list[str]:
+    """Parse comma-separated env values into a trimmed string list.
+
+    Falls back to the provided default when input is empty so model lists and
+    similar settings always remain usable.
+    """
     if value is None:
         return default
     parsed = [item.strip() for item in value.split(",") if item.strip()]
@@ -19,6 +29,11 @@ def _as_csv(value: str | None, default: list[str]) -> list[str]:
 
 
 def _as_optional_float(value: str | None) -> float | None:
+    """Parse positive float env values while treating empty/non-positive as unset.
+
+    This is used for optional limits where `None` means disabled behavior
+    rather than a numeric threshold.
+    """
     if value is None:
         return None
     text = value.strip()
@@ -34,7 +49,11 @@ def _as_optional_float(value: str | None) -> float | None:
 
 
 def load_dotenv(dotenv_path: str | Path = ".env", override: bool = False) -> None:
-    """Minimal .env loader without external dependencies."""
+    """Load key-value env vars from a local `.env` file without extra dependencies.
+
+    Existing process env vars are preserved unless `override=True`, matching
+    common dotenv behavior used in local development scripts.
+    """
     path = Path(dotenv_path)
     if not path.exists() or not path.is_file():
         return
@@ -60,6 +79,11 @@ def load_dotenv(dotenv_path: str | Path = ".env", override: bool = False) -> Non
 
 @dataclass(slots=True)
 class RuntimeConfig:
+    """Central runtime configuration for pipeline, judge, and refine components.
+
+    Values are primarily sourced from environment variables to keep server, CLI,
+    and test entrypoints aligned without duplicating option parsing logic.
+    """
     default_pass_threshold: float = 0.72
     default_workspace: str = "."
     default_max_iters: int = 3
@@ -78,6 +102,11 @@ class RuntimeConfig:
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
+        """Build `RuntimeConfig` from environment variables and defaults.
+
+        This method consolidates legacy aliases and current names so deployments
+        can migrate incrementally without breaking runtime initialization.
+        """
         return cls(
             default_pass_threshold=float(
                 os.getenv("PROMPT_REFINER_PASS_THRESHOLD", "0.72")

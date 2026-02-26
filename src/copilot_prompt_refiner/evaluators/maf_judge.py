@@ -8,6 +8,11 @@ from copilot_prompt_refiner.models import AgentCase, EvaluatorScore
 
 
 def _extract_score(text: str) -> float:
+    """Extract a normalized `[0, 1]` score from free-form judge text.
+
+    The parser prioritizes explicit `SCORE:` fields and falls back to first
+    plausible numeric token to tolerate minor format drift.
+    """
     # Prefer explicit SCORE line, otherwise first numeric token in [0,1].
     match = re.search(r"score\s*[:=]\s*([01](?:\.\d+)?)", text, re.IGNORECASE)
     if not match:
@@ -23,15 +28,31 @@ def _extract_score(text: str) -> float:
 
 
 class MAFJudgeEvaluator(Evaluator):
+    """Runtime-backed evaluator that asks an LLM to assess prompt reliability.
+
+    This complements heuristic evaluators with broader judgment over safety,
+    instruction-following, and agent workflow quality.
+    """
+
     name = "maf_judge"
     metric = "maf_reliability_assessment"
     weight = 1.4
 
     def __init__(self, runtime: TextGenerationRuntime, strict_runtime: bool = True) -> None:
+        """Initialize evaluator with runtime and strictness policy.
+
+        In strict mode, runtime failures surface immediately; otherwise a
+        neutral fallback score is returned with diagnostic reasoning.
+        """
         self.runtime = runtime
         self.strict_runtime = strict_runtime
 
     def evaluate(self, case: AgentCase, candidate_prompt: str) -> EvaluatorScore:
+        """Request LLM judgment for the candidate prompt and normalize its output.
+
+        The evaluator enforces a compact response format so Judge aggregation can
+        consume score and rationale without additional post-processing complexity.
+        """
         assistant_output = ""
         for message in reversed(case.logs):
             if message.role.lower() in {"assistant", "agent"}:

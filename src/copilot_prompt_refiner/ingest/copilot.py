@@ -51,6 +51,11 @@ SKIP_DIR_NAMES = {
 
 
 def _message_from_row(row: dict[str, Any]) -> MessageLog:
+    """Normalize one raw message row into `MessageLog`.
+
+    The mapper accepts common field aliases (`text`, `message`) so payloads from
+    multiple clients can be ingested without per-client adapters.
+    """
     return MessageLog(
         role=str(row.get("role", "assistant")),
         content=str(
@@ -69,6 +74,11 @@ def _message_from_row(row: dict[str, Any]) -> MessageLog:
 
 
 def _logs_from_json_payload(payload: Any) -> list[MessageLog]:
+    """Parse logs from JSON-compatible payload shapes.
+
+    Supports both list-of-message objects and envelope objects with `messages`,
+    returning an empty list when shape is unsupported.
+    """
     if isinstance(payload, list):
         return [_message_from_row(row) for row in payload if isinstance(row, dict)]
 
@@ -81,6 +91,11 @@ def _logs_from_json_payload(payload: Any) -> list[MessageLog]:
 
 
 def _logs_from_text(text: str) -> list[MessageLog]:
+    """Parse lightweight plain-text logs into role/content message records.
+
+    Lines prefixed with `user:` or `assistant:` are mapped to roles; other lines
+    default to assistant for backward compatibility.
+    """
     logs: list[MessageLog] = []
     for line in text.splitlines():
         clean = line.strip()
@@ -98,6 +113,11 @@ def _logs_from_text(text: str) -> list[MessageLog]:
 
 
 def load_logs_from_payload(logs_payload: Any) -> list[MessageLog]:
+    """Load logs from dict/list/string payloads with tolerant parsing behavior.
+
+    The function attempts JSON decoding first and falls back to plain-text line
+    parsing, allowing ingestion even when payloads are loosely formatted.
+    """
     if logs_payload is None:
         return []
 
@@ -122,6 +142,11 @@ def load_logs_from_payload(logs_payload: Any) -> list[MessageLog]:
 
 
 def _parse_time_like(value: Any) -> float:
+    """Parse numeric or ISO-like timestamps into sortable epoch seconds.
+
+    Invalid values return `-1.0` so source ranking can still proceed without
+    raising exceptions on malformed metadata.
+    """
     if value is None:
         return -1.0
 
@@ -148,6 +173,11 @@ def _parse_time_like(value: Any) -> float:
 
 
 def _normalize_log_sources(log_sources: Any) -> list[dict[str, Any]]:
+    """Normalize heterogeneous log source inputs into comparable entries.
+
+    Output records include path/content/timestamp/index fields so later logic
+    can rank recency and choose the best source deterministically.
+    """
     if log_sources is None:
         return []
 
@@ -197,11 +227,21 @@ def _normalize_log_sources(log_sources: Any) -> list[dict[str, Any]]:
 
 
 def _select_latest_log_source(log_sources: Any) -> dict[str, Any] | None:
+    """Select the highest-priority log source from normalized candidates.
+
+    Ranking prioritizes newer timestamps, JSON-like filenames, and log-hinted
+    paths to maximize chance of recovering current conversation context.
+    """
     normalized = _normalize_log_sources(log_sources)
     if not normalized:
         return None
 
     def sort_key(entry: dict[str, Any]) -> tuple[float, int, int, int]:
+        """Return ranking tuple for latest-log selection heuristics.
+
+        Higher timestamp wins first, then JSON/log-like path hints and original
+        list order are used as deterministic tie-breakers.
+        """
         path_lower = str(entry.get("path", "")).lower()
         is_json = 1 if path_lower.endswith(".json") else 0
         has_log_hint = 1 if any(
@@ -219,6 +259,11 @@ def _select_latest_log_source(log_sources: Any) -> dict[str, Any] | None:
 
 
 def _discover_latest_log_text(workspace: str | Path) -> tuple[str | None, str | None]:
+    """Discover and read the most recent local log file under workspace.
+
+    Search skips common build/venv/cache directories and returns both file text
+    and absolute path so metadata can record provenance.
+    """
     root = Path(workspace)
     if not root.exists() or not root.is_dir():
         return None, None
@@ -252,12 +297,22 @@ def _discover_latest_log_text(workspace: str | Path) -> tuple[str | None, str | 
 
 
 def _extract_string_constant(node: ast.AST) -> str | None:
+    """Return stripped string literal value from an AST node when available.
+
+    Used by prompt discovery to safely inspect assignments without executing
+    source files.
+    """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value.strip()
     return None
 
 
 def extract_system_prompt_from_python_source(source: str) -> str | None:
+    """Extract best system-prompt candidate from Python source text.
+
+    The extractor scans assignments and dict literals via AST to avoid execution,
+    then ranks candidates by key specificity and content length.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -266,6 +321,11 @@ def extract_system_prompt_from_python_source(source: str) -> str | None:
     candidates: list[tuple[int, str]] = []
 
     def register(name: str, value: str | None) -> None:
+        """Register a candidate with heuristic priority by variable/key name.
+
+        Priority favors explicit system-prompt identifiers over generic prompt
+        keys, improving candidate quality for multi-file repositories.
+        """
         if not value:
             return
         normalized = name.lower()
@@ -317,6 +377,11 @@ def _normalize_prompt_sources(
     prompt_sources: Any,
     definition_py_content: str | None,
 ) -> list[dict[str, str]]:
+    """Normalize prompt source payloads into `{path, content}` records.
+
+    This function accepts list/dict/string variants and always prepends inline
+    `definition_py_content` when provided.
+    """
     normalized: list[dict[str, str]] = []
 
     if isinstance(definition_py_content, str) and definition_py_content.strip():
@@ -358,6 +423,11 @@ def _normalize_prompt_sources(
 
 
 def _score_prompt_candidate(key: str, text: str, source_path: str, base_score: int) -> int:
+    """Heuristically score one prompt candidate for source selection.
+
+    Scoring combines key/path semantics and text length sanity checks to prefer
+    likely system prompts while down-weighting noisy or tiny snippets.
+    """
     score = base_score
     key_lower = key.lower()
     path_lower = source_path.lower()
@@ -396,6 +466,11 @@ def _collect_prompt_candidates_from_json(
     source_path: str,
     depth: int = 0,
 ) -> list[tuple[int, str, str]]:
+    """Recursively collect prompt-like string fields from JSON structures.
+
+    Depth and item limits keep traversal bounded so malformed or massive inputs
+    do not cause runaway parsing cost.
+    """
     if depth > 6:
         return []
 
@@ -436,6 +511,11 @@ def _collect_prompt_candidates_from_source(
     source_path: str,
     content: str,
 ) -> list[tuple[int, str, str]]:
+    """Collect scored prompt candidates from one source file's content.
+
+    Multiple extraction strategies are combined: AST parsing, JSON traversal,
+    regex assignment matching, and role-based message patterns.
+    """
     candidates: list[tuple[int, str, str]] = []
 
     python_extracted = extract_system_prompt_from_python_source(content)
@@ -493,6 +573,11 @@ def _resolve_system_prompt(
     definition_py_content: str | None,
     prompt_sources: Any = None,
 ) -> tuple[str | None, str | None, int]:
+    """Resolve final system prompt text plus provenance metadata.
+
+    Direct input wins; otherwise all source candidates are scored and the top
+    result is returned with source label and candidate count.
+    """
     if system_prompt and system_prompt.strip():
         return system_prompt.strip(), "input", 1
 
@@ -522,6 +607,11 @@ def _resolve_system_prompt(
 
 
 def _extract_ground_truth_from_payload(payload: Any) -> str | None:
+    """Extract ground-truth text from flexible payload conventions.
+
+    Supports dict keys, raw strings, and JSON-encoded strings so upstream
+    tools can provide expected output in multiple formats.
+    """
     keys = [
         "ground_truth",
         "expected",
@@ -559,6 +649,11 @@ def _resolve_ground_truth(
     ground_truth: str | None,
     ground_truth_content: Any,
 ) -> tuple[str | None, str | None]:
+    """Resolve ground truth value and its source label.
+
+    Explicit `ground_truth` takes precedence; otherwise extraction is attempted
+    from `ground_truth_content` payload fields.
+    """
     if isinstance(ground_truth, str) and ground_truth.strip():
         return ground_truth.strip(), "input"
 
@@ -574,6 +669,11 @@ def _infer_user_input(
     logs: list[MessageLog],
     logs_source_label: str = "payload.logs",
 ) -> tuple[str | None, str | None]:
+    """Infer user input from explicit value or most recent user log message.
+
+    Source labels are returned with the value to improve discovery metadata
+    and troubleshooting for payload completeness issues.
+    """
     if isinstance(user_input, str) and user_input.strip():
         return user_input.strip(), "input"
 
@@ -589,6 +689,11 @@ def _resolve_logs_payload(
     log_sources: Any,
     workspace: str | Path,
 ) -> tuple[list[MessageLog], str | None]:
+    """Resolve logs from direct payload, log sources, or workspace discovery.
+
+    The function returns parsed logs plus a source label that records where
+    the winning log evidence was selected from.
+    """
     parsed_logs = load_logs_from_payload(logs)
     if parsed_logs:
         return parsed_logs, "payload.logs"
@@ -622,6 +727,11 @@ def build_case(
     case_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentCase:
+    """Build a normalized `AgentCase` from explicit caller-provided fields.
+
+    This helper is primarily used by tests and direct integrations that already
+    know prompt/input values and only need log/context normalization.
+    """
     parsed_logs = load_logs_from_payload(logs)
     merged_context = list(dict.fromkeys(context_files or []))
 
@@ -656,6 +766,11 @@ def build_case_from_payload(
     case_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentCase:
+    """Build `AgentCase` from MCP-style payload with inference and fallbacks.
+
+    The builder resolves prompt, logs, user input, and ground truth from mixed
+    payload shapes while preserving rich discovery metadata.
+    """
     resolved_system_prompt, system_prompt_source, system_prompt_candidates = _resolve_system_prompt(
         system_prompt=system_prompt,
         definition_py_content=definition_py_content,
@@ -731,6 +846,11 @@ def build_case_from_sources(
     log_path: str | Path | None = None,
     workspace: str | Path = ".",
 ) -> AgentCase:
+    """Backward-compatible wrapper for legacy file-path based call sites.
+
+    It reads optional prompt/ground-truth/log files and delegates to `build_case`
+    so older integrations keep working with the newer payload-first model.
+    """
     prompt_text = system_prompt
     if not prompt_text and system_prompt_file:
         target = Path(system_prompt_file)

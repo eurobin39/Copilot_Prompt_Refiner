@@ -10,10 +10,20 @@ from copilot_prompt_refiner.pipeline import PromptRefinementPipeline
 
 
 def _print_json(data: dict[str, Any]) -> None:
+    """Print structured output as pretty JSON for CLI users.
+
+    UTF-8 characters are preserved to keep logs and multilingual payload fields
+    readable during local debugging.
+    """
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def _as_bool(value: Any, default: bool = True) -> bool:
+    """Coerce loosely typed CLI payload values into boolean flags.
+
+    This mirrors server-side parsing so behavior stays consistent between
+    `prompt-refiner` CLI and MCP tool execution paths.
+    """
     if value is None:
         return default
     if isinstance(value, bool):
@@ -26,6 +36,11 @@ def _as_bool(value: Any, default: bool = True) -> bool:
 
 
 def _as_int(value: Any, default: int | None = None) -> int | None:
+    """Coerce payload values into optional integer settings.
+
+    Invalid values gracefully fall back, avoiding CLI crashes for malformed
+    ad-hoc payloads.
+    """
     if value is None:
         return default
     if isinstance(value, int):
@@ -44,6 +59,11 @@ def _as_int(value: Any, default: int | None = None) -> int | None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Create CLI parser for discover/evaluate/refine/run subcommands.
+
+    All subcommands share payload input options so users can switch between
+    inspection and execution without changing invocation style.
+    """
     parser = argparse.ArgumentParser(
         prog="prompt-refiner",
         description="Payload-first prompt refinement framework for external agents.",
@@ -60,6 +80,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _extract_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap payload when input is nested under `payload_input`.
+
+    Some clients send wrapped request envelopes; this helper normalizes both
+    wrapped and direct JSON objects to one shape.
+    """
     payload = raw.get("payload_input")
     if isinstance(payload, dict):
         return payload
@@ -67,6 +92,11 @@ def _extract_payload(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """Load payload JSON from file path or inline JSON argument.
+
+    Exactly one payload source is required so command behavior is explicit and
+    reproducible.
+    """
     if args.payload_file is None and not args.payload_json:
         raise ValueError("Provide --payload-file or --payload-json.")
 
@@ -78,6 +108,11 @@ def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """CLI entrypoint for payload-first prompt evaluation and refinement.
+
+    Resolves payload into `AgentCase`, dispatches selected command, and emits
+    JSON output compatible with automation and manual inspection.
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
 

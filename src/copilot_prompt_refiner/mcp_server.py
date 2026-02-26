@@ -9,6 +9,11 @@ from copilot_prompt_refiner.pipeline import PromptRefinementPipeline
 
 
 def _as_bool(value: Any, default: bool = True) -> bool:
+    """Coerce loosely typed payload values into a boolean flag.
+
+    MCP clients often send strings/numbers for booleans, so this helper keeps
+    CLI and server behavior consistent across transports.
+    """
     if value is None:
         return default
     if isinstance(value, bool):
@@ -21,6 +26,11 @@ def _as_bool(value: Any, default: bool = True) -> bool:
 
 
 def _as_int(value: Any, default: int | None = None) -> int | None:
+    """Coerce payload values into an optional integer.
+
+    Invalid values return the provided default so iteration and limit fields
+    can be safely consumed without additional caller-side guards.
+    """
     if value is None:
         return default
     if isinstance(value, int):
@@ -39,6 +49,11 @@ def _as_int(value: Any, default: int | None = None) -> int | None:
 
 
 def _context_prompt_sources(context: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Convert `context.current_system_prompts` into synthetic prompt source files.
+
+    This compatibility path lets multi-agent payloads be ingested through the
+    same prompt-discovery pipeline as normal `prompt_sources`.
+    """
     if not isinstance(context, dict):
         return []
 
@@ -62,6 +77,11 @@ def _context_prompt_sources(context: dict[str, Any] | None) -> list[dict[str, st
 
 
 def _context_system_prompt(context: dict[str, Any] | None) -> str | None:
+    """Derive one composed system prompt from context when direct prompt is absent.
+
+    The output is intentionally structured by agent section to preserve source
+    attribution while still fitting single-prompt evaluation interfaces.
+    """
     if not isinstance(context, dict):
         return None
 
@@ -90,6 +110,11 @@ def _merge_prompt_sources(
     primary: Any,
     extras: list[dict[str, str]],
 ) -> Any:
+    """Merge normalized prompt-source extras into a possibly heterogeneous base value.
+
+    This keeps original caller shape when possible while ensuring context-derived
+    sources participate in downstream prompt candidate extraction.
+    """
     if not extras:
         return primary
     if primary is None:
@@ -100,7 +125,11 @@ def _merge_prompt_sources(
 
 
 def _normalize_payload_shape(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    """Fill optional payload slots with empty containers for stable MCP schemas."""
+    """Fill missing optional fields so MCP payload schema remains stable.
+
+    Shape metadata records whether values were provided or auto-filled, which
+    helps debug client interoperability without rejecting partial payloads.
+    """
     normalized = dict(payload)
     shape_status: dict[str, str] = {}
     defaults: dict[str, Any] = {
@@ -131,6 +160,11 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> tuple[dict[str, Any], d
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build CLI parser for running the MCP server in different transports.
+
+    Options mirror env vars so local dev, container deploys, and remote setups
+    can use the same entrypoint with minimal wrapper scripts.
+    """
     parser = argparse.ArgumentParser(
         prog="prompt-refiner-mcp",
         description="Run Copilot Prompt Refiner MCP server.",
@@ -191,7 +225,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _to_payload_case(payload: dict[str, Any] | None):
-    """Normalize MCP payload variants and resolve them into a single AgentCase."""
+    """Normalize incoming tool payload and resolve a unified `AgentCase`.
+
+    This function handles field aliases, nested payload wrappers, and context
+    fallbacks so all MCP tools share one robust ingestion path.
+    """
     if payload is None:
         payload = {}
     if not isinstance(payload, dict):
@@ -287,6 +325,11 @@ def _to_payload_case(payload: dict[str, Any] | None):
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Start MCP server, register tools, and dispatch selected transport mode.
+
+    The server builds one default refinement pipeline instance and exposes
+    discovery/evaluate/refine/run tools over FastMCP.
+    """
     args = _build_parser().parse_args(argv)
 
     try:
@@ -311,6 +354,11 @@ def main(argv: list[str] | None = None) -> None:
 
     @mcp.tool()
     def discover_case_input(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Inspect payload resolution results without running judge/refine logic.
+
+        Useful for client-side debugging because it shows resolved prompt/input
+        fields and discovery metadata before expensive model calls.
+        """
         case = _to_payload_case(payload_input)
         return {
             "case_input": {
@@ -326,14 +374,22 @@ def main(argv: list[str] | None = None) -> None:
 
     @mcp.tool()
     def evaluate_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Return only Judge evaluation output for the resolved payload case."""
+        """Return Judge evaluation artifacts for a resolved payload case.
+
+        This is the read-only scoring endpoint for workflows that want verdicts
+        and action recommendations without applying prompt mutations.
+        """
         case = _to_payload_case(payload_input)
         result = pipeline.evaluate(case)
         return result.to_dict()
 
     @mcp.tool()
     def refine_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Run one-pass judge+refine and return the prompt revision payload."""
+        """Run a single judge+refine pass and return the resulting prompt revision.
+
+        Use this endpoint when iterative convergence is unnecessary and a single
+        targeted patch is sufficient for the calling workflow.
+        """
         case = _to_payload_case(payload_input)
         result = pipeline.refine(case)
         return result.to_dict()
@@ -342,7 +398,11 @@ def main(argv: list[str] | None = None) -> None:
     def run_refinement_pipeline(
         payload_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run iterative evaluate/refine loop and return full pipeline artifacts."""
+        """Run iterative evaluate/refine loop and return full pipeline artifacts.
+
+        Includes final judge output, latest revision, iteration traces, and stop
+        reason so clients can inspect convergence and residual risk.
+        """
         case = _to_payload_case(payload_input)
         result = pipeline.run(
             case,

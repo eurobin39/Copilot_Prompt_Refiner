@@ -18,6 +18,12 @@ from copilot_prompt_refiner.models import (
 
 
 class JudgeAgent:
+    """Synthesize evaluator signals into a decision-oriented prompt quality verdict.
+
+    The Judge combines heuristic metrics and optional model reviews to produce
+    pass/fail status, failure evidence, and actionable refinement priorities.
+    """
+
     def __init__(
         self,
         evaluators: list[Evaluator],
@@ -27,6 +33,11 @@ class JudgeAgent:
         review_models: list[str] | None = None,
         disagreement_threshold: float = 2.5,
     ) -> None:
+        """Initialize Judge dependencies and decision thresholds.
+
+        At least one evaluator is required because all downstream aggregation and
+        failure/action generation relies on metric evidence.
+        """
         if not evaluators:
             raise ValueError("JudgeAgent requires at least one evaluator.")
 
@@ -38,7 +49,11 @@ class JudgeAgent:
         self.disagreement_threshold = disagreement_threshold
 
     def judge(self, case: AgentCase, candidate_prompt: str | None = None) -> JudgeResult:
-        """Build the final verdict by combining evaluator signals and model reviews."""
+        """Evaluate a prompt candidate and construct the canonical `JudgeResult`.
+
+        This method orchestrates scoring, review aggregation, failure extraction,
+        and final decision logic so downstream refinement has structured inputs.
+        """
         prompt = candidate_prompt or case.system_prompt
 
         scores = [evaluator.evaluate(case, prompt) for evaluator in self.evaluators]
@@ -110,6 +125,11 @@ class JudgeAgent:
         )
 
     def summarize_max_iters(self, final_judge: JudgeResult, max_iters: int) -> str:
+        """Summarize why iterative refinement stopped before reaching pass criteria.
+
+        In runtime mode this is LLM-generated for readability; otherwise a
+        deterministic fallback message is returned from known failure tags.
+        """
         if self.runtime is None:
             return (
                 f"Reached max_iters={max_iters}. Remaining blockers: "
@@ -140,6 +160,11 @@ class JudgeAgent:
             return "Reached max iterations without meeting all criteria."
 
     def _build_execution_summary(self, case: AgentCase) -> dict[str, Any]:
+        """Compress conversation logs into judge-friendly execution diagnostics.
+
+        The summary keeps only counts and short message snippets so review models
+        can reason about behavior without consuming full transcript length.
+        """
         tool_calls = [m for m in case.logs if m.role.lower() == "tool"]
         assistant_messages = [m for m in case.logs if m.role.lower() in {"assistant", "agent"}]
         user_messages = [m for m in case.logs if m.role.lower() == "user"]
@@ -167,6 +192,11 @@ class JudgeAgent:
         baseline_score: float,
         execution_summary: dict[str, Any],
     ) -> list[ModelReview]:
+        """Collect per-model reviews using LLM judges or heuristic fallback logic.
+
+        This layer isolates runtime fragility: strict mode raises immediately,
+        while non-strict mode records fallback reviews with diagnostic notes.
+        """
         reviews: list[ModelReview] = []
         for model in self.review_models:
             if self.runtime is None or model == "heuristic":
@@ -212,6 +242,11 @@ class JudgeAgent:
         candidate_prompt: str,
         execution_summary: dict[str, Any],
     ) -> ModelReview:
+        """Request a strict-JSON review from one reviewer model.
+
+        The response is normalized into `ModelReview` so later aggregation can
+        compare model outputs with stable fields and bounded score ranges.
+        """
         instruction = (
             "Review agent reliability and return strict JSON only.\n"
             "JSON schema:\n"
@@ -261,6 +296,11 @@ class JudgeAgent:
         baseline_score: float,
         execution_summary: dict[str, Any],
     ) -> ModelReview:
+        """Produce a lightweight review when LLM judging is unavailable or skipped.
+
+        It maps low-scoring evaluator metrics to failure tags and suggestions,
+        then applies additional format checks from recent execution output.
+        """
         tags: list[str] = []
         suggestions: list[str] = []
         for item in sorted(evaluator_scores, key=lambda x: x.score):
@@ -297,7 +337,11 @@ class JudgeAgent:
         )
 
     def _aggregate_reviews(self, reviews: list[ModelReview]) -> dict[str, Any]:
-        """Aggregate per-model reviews into consensus tags and decision-ready metrics."""
+        """Aggregate per-model reviews into consensus metrics and failure tags.
+
+        The output captures median score, disagreement range, policy/format risk,
+        and a consensus tag set used by decision and action-prioritization steps.
+        """
         if not reviews:
             return {
                 "score_median_0_to_10": 0.0,
@@ -355,6 +399,11 @@ class JudgeAgent:
         evaluator_scores: list[Any],
         top_n: int,
     ) -> list[FailureCase]:
+        """Build reproducible failure records from consensus tags and evidence text.
+
+        Each case links a failure type to observed output, expected repair intent,
+        and success criteria so refine logic can target concrete regressions.
+        """
         output_text = ""
         for message in reversed(case.logs):
             if message.role.lower() in {"assistant", "agent"}:
@@ -385,6 +434,11 @@ class JudgeAgent:
         reviews: list[ModelReview],
         top_k: int,
     ) -> list[PrioritizedAction]:
+        """Convert failures and review suggestions into ordered repair actions.
+
+        Consensus-tag fixes are added first, then model suggestions fill remaining
+        slots while duplicate actions are filtered out.
+        """
         actions: list[PrioritizedAction] = []
         seen: set[str] = set()
 
@@ -432,7 +486,11 @@ class JudgeAgent:
         failure_cases: list[FailureCase],
         prioritized_actions: list[PrioritizedAction],
     ) -> dict[str, Any]:
-        """Convert aggregate metrics into PASS/FAIL, with optional runtime tie-break."""
+        """Turn aggregate review metrics into the final decision payload.
+
+        A deterministic pass gate is applied first; when review disagreement is
+        high, optional runtime tie-break can override score/summary conservatively.
+        """
         score = float(aggregated["score_median_0_to_10"])
         passed = self._is_pass(
             score_0_to_10=score,
@@ -476,7 +534,11 @@ class JudgeAgent:
         failure_cases: list[FailureCase],
         prioritized_actions: list[PrioritizedAction],
     ) -> dict[str, Any]:
-        """Ask runtime for conservative tie-break output when review disagreement is high."""
+        """Ask runtime for tie-break output when model reviews diverge too widely.
+
+        The tie-break response is still constrained by hard safety/format pass
+        gates so relaxed model output cannot bypass non-negotiable criteria.
+        """
         model = self.review_models[0] if self.review_models else "heuristic"
         instruction = (
             "Resolve disagreement among judges. Return strict JSON only:\n"
@@ -520,6 +582,11 @@ class JudgeAgent:
         system_prompt: str,
         user_input: str,
     ) -> str:
+        """Run one completion while temporarily pinning runtime to a review model.
+
+        The original runtime model is restored in `finally` so per-model reviews
+        do not leak model state into later calls.
+        """
         if self.runtime is None:
             raise RuntimeError("Runtime is unavailable.")
 
@@ -540,6 +607,11 @@ class JudgeAgent:
                     pass
 
     def _is_pass(self, *, score_0_to_10: float, policy_violation: bool, format_pass_rate: float) -> bool:
+        """Apply hard pass gate for score, policy safety, and format reliability.
+
+        This central predicate is reused across direct decisions and tie-break
+        flows to keep pass semantics identical.
+        """
         return (
             (score_0_to_10 / 10.0) >= self.pass_threshold
             and not policy_violation
@@ -547,6 +619,11 @@ class JudgeAgent:
         )
 
     def _extract_json(self, raw: str) -> dict[str, Any]:
+        """Extract a JSON object from an LLM response string.
+
+        Accepts pure-JSON output or mixed text with one JSON block and raises
+        when no valid object can be recovered.
+        """
         text = raw.strip()
         if text.startswith("{") and text.endswith("}"):
             return json.loads(text)
@@ -558,6 +635,11 @@ class JudgeAgent:
         return json.loads(text[start : end + 1])
 
     def _metric_to_failure_tag(self, metric: str) -> str:
+        """Map evaluator metric names to normalized high-level failure tags.
+
+        This keeps downstream action templates stable even when evaluator naming
+        differs across heuristic and runtime-backed implementations.
+        """
         name = metric.lower()
         if "ground_truth" in name or "similarity" in name:
             return "GROUND_TRUTH_MISMATCH"
@@ -572,6 +654,11 @@ class JudgeAgent:
         return "GENERAL_QUALITY"
 
     def _normalize_tags(self, tags: Any) -> list[str]:
+        """Normalize arbitrary tag lists into uppercase underscore identifiers.
+
+        Non-string values are ignored and duplicates are removed while preserving
+        first-seen order for predictable action ranking.
+        """
         if not isinstance(tags, list):
             return []
         normalized: list[str] = []
@@ -584,6 +671,11 @@ class JudgeAgent:
         return normalized
 
     def _as_str_list(self, value: Any) -> list[str]:
+        """Coerce mixed values into a clean list of non-empty strings.
+
+        Used for LLM JSON fields where schema compliance is expected but not
+        guaranteed, preventing malformed values from leaking downstream.
+        """
         if not isinstance(value, list):
             return []
         result: list[str] = []
@@ -593,6 +685,11 @@ class JudgeAgent:
         return result
 
     def _clamp_0_to_10(self, value: Any) -> float:
+        """Parse a numeric value and clamp it to inclusive `[0, 10]`.
+
+        Invalid or missing values collapse to `0.0`, ensuring score math does
+        not raise and decision logic always receives bounded floats.
+        """
         try:
             number = float(value)
         except (TypeError, ValueError):
@@ -600,6 +697,11 @@ class JudgeAgent:
         return max(0.0, min(10.0, number))
 
     def _required_fix_for_tag(self, tag: str) -> str:
+        """Return a default corrective action template for a failure tag.
+
+        These templates seed prioritized actions so Refine can patch prompts
+        without requiring free-form generation in every path.
+        """
         mapping = {
             "FORMAT_VIOLATION": "Add an explicit Output Format section with required JSON schema fields.",
             "TOOL_MISUSE": "Clarify tool selection and verification rules before final answers.",
@@ -613,6 +715,11 @@ class JudgeAgent:
         return mapping.get(tag, mapping["GENERAL_QUALITY"])
 
     def _target_section_for_tag(self, tag: str) -> str:
+        """Map each failure tag to the prompt section most likely to fix it.
+
+        Section hints help Refine patchers place instructions in predictable
+        locations instead of growing prompts with scattered constraints.
+        """
         mapping = {
             "FORMAT_VIOLATION": "Output Format",
             "TOOL_MISUSE": "Tool Usage Rules",
@@ -626,6 +733,11 @@ class JudgeAgent:
         return mapping.get(tag, "General Constraints")
 
     def _success_criteria_for_tag(self, tag: str) -> str:
+        """Provide measurable success criteria for each failure category.
+
+        Criteria are attached to failure cases so reviewers can verify whether
+        a future revision actually addressed the underlying issue.
+        """
         mapping = {
             "FORMAT_VIOLATION": "Schema validation passes for all evaluated cases.",
             "TOOL_MISUSE": "Tool-required cases include valid tool evidence in final responses.",
@@ -639,6 +751,11 @@ class JudgeAgent:
         return mapping.get(tag, mapping["GENERAL_QUALITY"])
 
     def _evidence_for_tag(self, tag: str, metric_reasoning: dict[str, str]) -> str:
+        """Choose the most relevant evaluator evidence string for a failure tag.
+
+        The method prefers metric-specific reasoning but falls back gracefully
+        to any available evidence when ideal metric mapping is unavailable.
+        """
         tag_metric_map = {
             "FORMAT_VIOLATION": "instruction_structure",
             "TOOL_MISUSE": "tool_policy_coverage",

@@ -10,6 +10,12 @@ from copilot_prompt_refiner.models import AgentCase, JudgeResult, PrioritizedAct
 
 
 class RefineAgent:
+    """Apply Judge outputs to produce controlled prompt revisions.
+
+    The agent prefers runtime generation for nuanced edits but always keeps
+    deterministic fallback paths so refinement can continue under failures.
+    """
+
     def __init__(
         self,
         runtime: TextGenerationRuntime | None = None,
@@ -17,13 +23,22 @@ class RefineAgent:
         max_prompt_growth_ratio: float | None = None,
         max_actions: int = 3,
     ) -> None:
+        """Configure refinement behavior and optional runtime dependencies.
+
+        `strict_runtime` controls whether runtime failures abort refinement or
+        fall back to deterministic patching logic.
+        """
         self.runtime = runtime
         self.strict_runtime = strict_runtime
         self.max_prompt_growth_ratio = max_prompt_growth_ratio
         self.max_actions = max_actions
 
     def refine(self, case: AgentCase, judge_result: JudgeResult) -> PromptRevision:
-        """Apply Judge findings to produce a revised prompt with traceable patch notes."""
+        """Produce one prompt revision from case context and Judge findings.
+
+        Runtime-based refinement is attempted first; on runtime/filter failures,
+        the method falls back to heuristic patching while recording diagnostics.
+        """
         selected_actions = self._select_actions(judge_result)
         targeted_failures = [item.linked_failure_type for item in selected_actions]
         action_texts = [item.action for item in selected_actions]
@@ -79,7 +94,11 @@ class RefineAgent:
         judge_result: JudgeResult,
         selected_actions: list[PrioritizedAction],
     ) -> tuple[str, list[str]]:
-        """Call LLM runtime with compact Judge context and parse strict JSON output."""
+        """Run LLM refinement with compact, policy-safe Judge context.
+
+        The runtime is asked for strict JSON so refined prompt text and summary
+        can be parsed deterministically and attached to change notes.
+        """
         action_lines = self._compact_action_lines(selected_actions)
         low_scoring_categories = self._low_scoring_categories(judge_result)
         verdict_context = self._verdict_context(judge_result)
@@ -163,7 +182,11 @@ class RefineAgent:
         judge_result: JudgeResult,
         selected_actions: list[PrioritizedAction],
     ) -> PromptRevision:
-        """Deterministic fallback patcher used when runtime is unavailable or filtered."""
+        """Apply deterministic section-level patches without any runtime dependency.
+
+        This fallback targets only high-priority failures and keeps behavior
+        predictable in offline, strict-security, or content-filtered scenarios.
+        """
         prompt = case.system_prompt.strip()
         lower_prompt = prompt.lower()
         patch_notes: list[str] = []
@@ -258,7 +281,11 @@ class RefineAgent:
         )
 
     def _select_actions(self, judge_result: JudgeResult) -> list[PrioritizedAction]:
-        """Prefer prioritized actions from Judge; fallback to legacy recommendations."""
+        """Select a bounded action list for the current refinement step.
+
+        Structured `prioritized_actions` are preferred; plain string
+        recommendations are wrapped into generic actions as compatibility fallback.
+        """
         if judge_result.prioritized_actions:
             return judge_result.prioritized_actions[: self.max_actions]
 
@@ -282,6 +309,11 @@ class RefineAgent:
         refined_prompt: str,
         selected_actions: list[PrioritizedAction],
     ) -> tuple[str, float, str | None]:
+        """Enforce optional prompt-growth budget and trim patches when needed.
+
+        If generated edits exceed the configured budget, only a compact minimal
+        patch is retained to avoid broad rewrites and token-cost explosions.
+        """
         original_len = max(len(original_prompt.strip()), 1)
         refined_len = len(refined_prompt.strip())
         growth_ratio = (refined_len - original_len) / float(original_len)
@@ -329,6 +361,11 @@ class RefineAgent:
         )
 
     def _is_content_filter_error(self, exc: Exception) -> bool:
+        """Detect Azure/OpenAI content-filter style failures from rich or plain errors.
+
+        Supports both structured `AzureOpenAIRequestError` payloads and generic
+        exception text markers for robust fallback triggering.
+        """
         if isinstance(exc, AzureOpenAIRequestError):
             payload = exc.response_json.get("error")
             if isinstance(payload, dict):
@@ -351,6 +388,11 @@ class RefineAgent:
         return any(marker in text for marker in markers)
 
     def _extract_content_filter_diagnostics(self, exc: Exception) -> str:
+        """Extract human-readable content filter diagnostics from caught exceptions.
+
+        Diagnostics are appended to patch notes so operators can trace why
+        runtime generation was skipped or retried with safer instructions.
+        """
         if isinstance(exc, AzureOpenAIRequestError):
             return self._extract_diagnostics_from_payload(
                 exc.response_json,
@@ -370,6 +412,11 @@ class RefineAgent:
         route: str | None = None,
         status_code: int | None = None,
     ) -> str:
+        """Format structured Azure error payload into concise diagnostic text.
+
+        The formatter reports route/status/codes and any triggered categories to
+        make filter outcomes observable without dumping full provider payloads.
+        """
         error_obj = payload.get("error")
         if not isinstance(error_obj, dict):
             parts = []
@@ -410,6 +457,11 @@ class RefineAgent:
         return "Content filter details: " + " ".join(parts)
 
     def _extract_json_object(self, text: str) -> dict[str, Any] | None:
+        """Recover a JSON object from raw text when strict parsing is not guaranteed.
+
+        Returns `None` if no object can be decoded, allowing callers to keep
+        graceful fallback behavior instead of raising parse exceptions.
+        """
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1 or end <= start:
@@ -421,6 +473,11 @@ class RefineAgent:
         return maybe if isinstance(maybe, dict) else None
 
     def _sanitize_for_policy(self, text: str, max_len: int = 260) -> str:
+        """Redact high-risk jailbreak phrases and enforce compact text length.
+
+        This keeps runtime prompts operational while reducing policy-triggering
+        wording in model-facing action and verdict context snippets.
+        """
         compact = " ".join(text.split())
         filtered = re.sub(
             r"(?i)\b(jailbreak|bypass|ignore\s+previous|override\s+policy|developer\s+mode)\b",
@@ -432,6 +489,11 @@ class RefineAgent:
         return filtered[: max_len - 3].rstrip() + "..."
 
     def _compact_action_lines(self, selected_actions: list[PrioritizedAction]) -> str:
+        """Build short bullet lines from selected actions for runtime prompts.
+
+        Limiting action text length and count helps maintain prompt focus and
+        reduces the chance of content-filter hits during refinement calls.
+        """
         if not selected_actions:
             return "- Improve format consistency."
         lines = []
@@ -441,6 +503,11 @@ class RefineAgent:
         return "\n".join(lines)
 
     def _low_scoring_categories(self, judge_result: JudgeResult) -> str:
+        """Render low-scoring evaluator metrics as concise bullet text.
+
+        Runtime refinement uses this signal to constrain edits to weak areas
+        instead of rewriting already-strong sections.
+        """
         categories: list[str] = []
         for score in sorted(judge_result.evaluator_scores, key=lambda item: item.score):
             if score.score < 0.7:
@@ -450,6 +517,11 @@ class RefineAgent:
         return "\n".join(categories[:5])
 
     def _verdict_context(self, judge_result: JudgeResult) -> str:
+        """Render top per-model verdicts into a compact runtime context block.
+
+        Review reasoning is sanitized and truncated to preserve signal while
+        minimizing policy-sensitive or overly verbose instructions.
+        """
         lines: list[str] = []
         for review in judge_result.per_model_reviews[:3]:
             tags = ",".join(review.failure_tags[:3]) if review.failure_tags else "none"
@@ -462,7 +534,11 @@ class RefineAgent:
         return "\n".join(lines)
 
     def _parse_refine_response(self, raw: str) -> tuple[str, str]:
-        """Parse runtime JSON response and return refined prompt plus summary text."""
+        """Parse runtime output into `(refined_prompt, summary)` with safe fallback.
+
+        If strict JSON parsing fails, raw text is treated as prompt output so the
+        refinement pipeline can still return a usable revision.
+        """
         parsed = self._extract_json_object(raw)
         if parsed is None:
             return raw.strip(), ""

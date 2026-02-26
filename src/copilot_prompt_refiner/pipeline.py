@@ -22,12 +22,23 @@ from copilot_prompt_refiner.models import (
 
 
 class PromptRefinementPipeline:
+    """Coordinate Judge and Refine agents into a repeatable optimization workflow.
+
+    The pipeline supports one-shot calls and iterative loops so callers can choose
+    between fast feedback and convergence-oriented refinement.
+    """
+
     def __init__(
         self,
         judge_agent: JudgeAgent,
         refine_agent: RefineAgent,
         max_iters: int = 3,
     ) -> None:
+        """Initialize pipeline with injected Judge/Refine agents.
+
+        Dependency injection keeps runtime/model decisions outside orchestration
+        logic and makes the pipeline easier to test in isolation.
+        """
         self.judge_agent = judge_agent
         self.refine_agent = refine_agent
         self.max_iters = max(1, max_iters)
@@ -40,7 +51,11 @@ class PromptRefinementPipeline:
         strict_maf: bool | None = None,
         max_iters: int | None = None,
     ) -> "PromptRefinementPipeline":
-        """Build a pipeline from env/config defaults with optional runtime overrides."""
+        """Create a production-ready pipeline from environment-backed runtime config.
+
+        Optional arguments override env defaults so tests and CLI calls can tune
+        thresholds, model usage, and iteration limits without mutating config files.
+        """
         load_dotenv()
         config = RuntimeConfig.from_env()
 
@@ -97,16 +112,28 @@ class PromptRefinementPipeline:
         return cls(judge_agent=judge, refine_agent=refine, max_iters=resolved_max_iters)
 
     def evaluate(self, case: AgentCase, candidate_prompt: str | None = None) -> JudgeResult:
-        """Score a prompt candidate and return a structured Judge verdict."""
+        """Evaluate one prompt candidate and return structured Judge results.
+
+        This is the read-only scoring path used by `evaluate_prompt` and by each
+        loop step before deciding whether another refinement pass is needed.
+        """
         return self.judge_agent.judge(case, candidate_prompt=candidate_prompt)
 
     def refine(self, case: AgentCase) -> PromptRevision:
-        """Run one-pass judge+refine and return only the prompt revision."""
+        """Run a single judge-then-refine cycle and return only revision output.
+
+        Use this when callers want prompt edits immediately and do not need
+        traces, stop reasons, or full multi-iteration diagnostics.
+        """
         judge_result = self.evaluate(case)
         return self.refine_agent.refine(case, judge_result)
 
     def run(self, case: AgentCase, max_iters: int | None = None) -> PipelineResult:
-        """Iterate evaluate/refine until pass threshold or max iteration budget is reached."""
+        """Execute iterative refinement until success or iteration budget exhaustion.
+
+        Each iteration records trace metrics, re-evaluates the latest prompt, and
+        either exits on pass or applies targeted actions from the Judge verdict.
+        """
         iter_limit = max(1, max_iters if max_iters is not None else self.max_iters)
         current_prompt = case.system_prompt
         traces: list[IterationTrace] = []
@@ -167,7 +194,11 @@ class PromptRefinementPipeline:
         )
 
     def _case_with_prompt(self, case: AgentCase, prompt: str) -> AgentCase:
-        """Clone a case while swapping only the candidate system prompt."""
+        """Clone an existing case while replacing only the system prompt text.
+
+        Keeping other fields unchanged preserves evaluation comparability across
+        iterations and avoids accidental drift in user/log/ground-truth context.
+        """
         return AgentCase(
             case_id=case.case_id,
             system_prompt=prompt,
@@ -179,7 +210,11 @@ class PromptRefinementPipeline:
         )
 
     def _identity_revision(self, prompt: str) -> PromptRevision:
-        """Return a no-op revision used before any refinement is applied."""
+        """Build a no-op revision object used before first refinement.
+
+        This keeps return shapes stable even when iteration 1 already passes and
+        no actual prompt mutation is required.
+        """
         return PromptRevision(
             original_prompt=prompt,
             refined_prompt=prompt,
