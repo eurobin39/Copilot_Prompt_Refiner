@@ -70,7 +70,7 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
     and response-shape normalization into plain completion text.
     """
 
-    model: str = "gpt-4.1-mini"
+    model: str = "gpt-4.1"
     endpoint: str | None = None
     api_key: str | None = None
     api_version: str | None = None
@@ -101,7 +101,7 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
         self.model = _as_optional_text(
             self.model
             or os.getenv("AZURE_OPENAI_MODEL")
-            or os.getenv("MAF_MODEL", "gpt-4.1-mini")
+            or os.getenv("MAF_MODEL", "gpt-4.1")
         )
         timeout_value = os.getenv("PROMPT_REFINER_TIMEOUT_SEC")
         if timeout_value:

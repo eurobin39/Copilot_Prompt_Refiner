@@ -87,11 +87,11 @@ class RuntimeConfig:
     default_pass_threshold: float = 0.72
     default_workspace: str = "."
     default_max_iters: int = 3
-    default_model: str = "gpt-4.1-mini"
+    default_model: str = "gpt-4.1"
     use_microsoft_agent_framework: bool = True
     strict_microsoft_agent_framework: bool = True
     judge_review_models: list[str] = field(
-        default_factory=lambda: ["gpt-4.1-mini", "mistral-large", "grok-2-latest"]
+        default_factory=lambda: ["gpt-4.1", "gpt-5.2-chat", "o1"]
     )
     judge_disagreement_threshold: float = 2.5
     refine_max_prompt_growth_ratio: float | None = None
@@ -115,7 +115,7 @@ class RuntimeConfig:
             default_max_iters=int(os.getenv("PROMPT_REFINER_MAX_ITERS", "3")),
             default_model=os.getenv(
                 "AZURE_OPENAI_MODEL",
-                os.getenv("MAF_MODEL", os.getenv("PROMPT_REFINER_MODEL", "gpt-4.1-mini")),
+                os.getenv("MAF_MODEL", os.getenv("PROMPT_REFINER_MODEL", "gpt-4.1")),
             ),
             use_microsoft_agent_framework=_as_bool(
                 os.getenv("PROMPT_REFINER_USE_MAF"), True
@@ -125,7 +125,7 @@ class RuntimeConfig:
             ),
             judge_review_models=_as_csv(
                 os.getenv("PROMPT_REFINER_JUDGE_MODELS"),
-                ["gpt-4.1-mini", "mistral-large", "grok-2-latest"],
+                ["gpt-4.1", "gpt-5.2-chat", "o1"],
             ),
             judge_disagreement_threshold=float(
                 os.getenv("PROMPT_REFINER_JUDGE_DISAGREEMENT_THRESHOLD", "2.5")
