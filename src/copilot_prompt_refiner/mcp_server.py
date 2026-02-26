@@ -99,6 +99,37 @@ def _merge_prompt_sources(
     return [primary, *extras]
 
 
+def _normalize_payload_shape(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Fill optional payload slots with empty containers for stable MCP schemas."""
+    normalized = dict(payload)
+    shape_status: dict[str, str] = {}
+    defaults: dict[str, Any] = {
+        "logs": {},
+        "log_sources": [],
+        "ground_truth_content": {},
+    }
+
+    for key, default_value in defaults.items():
+        if key in normalized and normalized[key] is not None:
+            shape_status[key] = "provided"
+            continue
+
+        # Keep container objects independent per request.
+        if isinstance(default_value, list):
+            normalized[key] = []
+        elif isinstance(default_value, dict):
+            normalized[key] = {}
+        else:
+            normalized[key] = default_value
+
+        if key in payload:
+            shape_status[key] = "normalized_from_null"
+        else:
+            shape_status[key] = "auto_filled"
+
+    return normalized, shape_status
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="prompt-refiner-mcp",
@@ -160,6 +191,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _to_payload_case(payload: dict[str, Any] | None):
+    """Normalize MCP payload variants and resolve them into a single AgentCase."""
     if payload is None:
         payload = {}
     if not isinstance(payload, dict):
@@ -170,14 +202,17 @@ def _to_payload_case(payload: dict[str, Any] | None):
     nested_payload = payload.get("payload_input")
     if isinstance(nested_payload, dict):
         payload = nested_payload
+    payload, payload_shape = _normalize_payload_shape(payload)
 
     context_files = payload.get("context_files")
     if context_files is not None and not isinstance(context_files, list):
         raise ValueError("context_files must be a list of strings.")
 
-    metadata = payload.get("metadata")
-    if metadata is not None and not isinstance(metadata, dict):
+    metadata_raw = payload.get("metadata")
+    if metadata_raw is not None and not isinstance(metadata_raw, dict):
         raise ValueError("metadata must be an object.")
+    metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    metadata["payload_shape"] = payload_shape
 
     context = payload.get("context")
     if context is not None and not isinstance(context, dict):
@@ -291,12 +326,14 @@ def main(argv: list[str] | None = None) -> None:
 
     @mcp.tool()
     def evaluate_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return only Judge evaluation output for the resolved payload case."""
         case = _to_payload_case(payload_input)
         result = pipeline.evaluate(case)
         return result.to_dict()
 
     @mcp.tool()
     def refine_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run one-pass judge+refine and return the prompt revision payload."""
         case = _to_payload_case(payload_input)
         result = pipeline.refine(case)
         return result.to_dict()
@@ -305,6 +342,7 @@ def main(argv: list[str] | None = None) -> None:
     def run_refinement_pipeline(
         payload_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Run iterative evaluate/refine loop and return full pipeline artifacts."""
         case = _to_payload_case(payload_input)
         result = pipeline.run(
             case,

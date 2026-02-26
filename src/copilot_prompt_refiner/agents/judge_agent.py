@@ -38,6 +38,7 @@ class JudgeAgent:
         self.disagreement_threshold = disagreement_threshold
 
     def judge(self, case: AgentCase, candidate_prompt: str | None = None) -> JudgeResult:
+        """Build the final verdict by combining evaluator signals and model reviews."""
         prompt = candidate_prompt or case.system_prompt
 
         scores = [evaluator.evaluate(case, prompt) for evaluator in self.evaluators]
@@ -296,6 +297,7 @@ class JudgeAgent:
         )
 
     def _aggregate_reviews(self, reviews: list[ModelReview]) -> dict[str, Any]:
+        """Aggregate per-model reviews into consensus tags and decision-ready metrics."""
         if not reviews:
             return {
                 "score_median_0_to_10": 0.0,
@@ -430,6 +432,7 @@ class JudgeAgent:
         failure_cases: list[FailureCase],
         prioritized_actions: list[PrioritizedAction],
     ) -> dict[str, Any]:
+        """Convert aggregate metrics into PASS/FAIL, with optional runtime tie-break."""
         score = float(aggregated["score_median_0_to_10"])
         passed = self._is_pass(
             score_0_to_10=score,
@@ -473,6 +476,7 @@ class JudgeAgent:
         failure_cases: list[FailureCase],
         prioritized_actions: list[PrioritizedAction],
     ) -> dict[str, Any]:
+        """Ask runtime for conservative tie-break output when review disagreement is high."""
         model = self.review_models[0] if self.review_models else "heuristic"
         instruction = (
             "Resolve disagreement among judges. Return strict JSON only:\n"

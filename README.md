@@ -1,16 +1,16 @@
 # Copilot Prompt Refiner
 
-Microsoft Agent Framework 기반 Judge/Refine 에이전트 패턴을 사용해, 외부 에이전트 시스템 프롬프트를 평가/개선하는 플러그인형 프레임워크입니다.
+A plugin-style framework that evaluates and improves external agent system prompts using a Microsoft Agent Framework Judge/Refine agent pattern.
 
-## 목표
-- VS Code Copilot 대화 로그/입력/파일 컨텍스트를 수집
-- 복수 평가 모델(앙상블)로 품질 점수화
-- Judge Agent가 개선 피드백 생성
-- Refine Agent가 시스템 프롬프트 리비전 생성
-- MCP 서버 툴로 외부 에이전트에서 호출 가능
-- evaluate -> judge(ensemble/aggregation/tie-breaker) -> refine(small patch) 루프 지원
+## Goals
+- Collect VS Code Copilot chat logs, user input, and file context
+- Score prompt quality with multi-model ensemble evaluation
+- Generate improvement feedback with Judge Agent
+- Generate prompt revisions with Refine Agent
+- Expose MCP tools for external agent integration
+- Support iterative loops: `evaluate -> judge(ensemble/aggregation/tie-breaker) -> refine(small patch)`
 
-## 빠른 시작
+## Quick Start
 
 ```bash
 python -m venv .venv
@@ -18,56 +18,56 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-`.env` 설정:
+Set up `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-필수 입력:
+Required:
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_API_KEY`
 
-권장 입력:
+Recommended:
 - `PROMPT_REFINER_MAX_ITERS`
 - `PROMPT_REFINER_JUDGE_MODELS`
-- `PROMPT_REFINER_REFINE_MAX_GROWTH` (옵션, 비우면 성장 제한 없음)
+- `PROMPT_REFINER_REFINE_MAX_GROWTH` (optional; no growth cap when empty)
 
-MCP 서버까지 사용하려면:
+To use the MCP server:
 
 ```bash
 pip install -e .[mcp]
 ```
 
-## CLI 사용
+## CLI Usage
 
-Payload 파일 예시:
+Example payload file:
 
 ```bash
 cat > payload.json <<'JSON'
 {
   "payload_input": {
     "workspace": "remote-repo",
-    "user_input": "장애 원인을 요약해줘",
+    "user_input": "Summarize the outage root cause.",
     "definition_py_content": "SYSTEM_PROMPT = \"You are an agent ...\"",
     "logs": [
-      {"role": "user", "content": "장애 원인 요약해줘"},
-      {"role": "assistant", "content": "분석 중"}
+      {"role": "user", "content": "Summarize the outage root cause."},
+      {"role": "assistant", "content": "Analyzing"}
     ],
-    "ground_truth_content": {"ground_truth": "DB migration 누락"},
+    "ground_truth_content": {"ground_truth": "Missing DB migration"},
     "context_files": ["definition.py", "logs/agent.json"]
   }
 }
 JSON
 ```
 
-케이스 구성 확인:
+Inspect resolved case input:
 
 ```bash
 prompt-refiner discover --payload-file payload.json
 ```
 
-평가/개선 실행:
+Run evaluation/refinement:
 
 ```bash
 prompt-refiner evaluate --payload-file payload.json
@@ -75,21 +75,21 @@ prompt-refiner refine --payload-file payload.json
 prompt-refiner run --payload-file payload.json
 ```
 
-## MCP 서버
+## MCP Server
 
-stdio transport로 실행:
+Run with stdio transport:
 
 ```bash
 prompt-refiner-mcp
 ```
 
-또는 외부 레포에서 경로 문제 없이 실행하려면:
+Or run with helper script (useful from external repos):
 
 ```bash
 ./scripts/run_mcp_server.sh
 ```
 
-원격 HTTP(Streamable HTTP)로 실행:
+Run as remote HTTP (Streamable HTTP):
 
 ```bash
 PROMPT_REFINER_MCP_TRANSPORT=streamable-http \
@@ -100,34 +100,34 @@ PROMPT_REFINER_MCP_STATELESS_HTTP=true \
 ./scripts/run_mcp_server_http.sh
 ```
 
-Copilot Agent mode에서는 `command`(subprocess, stdio) 방식이 가장 안정적입니다.
-HTTP를 사용할 때는 `PROMPT_REFINER_MCP_STATELESS_HTTP=true`를 권장합니다(세션 ID 없이 호출 가능).
+In Copilot Agent mode, `command` (subprocess + stdio) is usually the most stable.
+For HTTP transport, `PROMPT_REFINER_MCP_STATELESS_HTTP=true` is recommended.
 
-외부 에이전트에서 사용할 MCP tools:
+Available MCP tools:
 - `discover_case_input`
 - `evaluate_prompt`
 - `refine_prompt`
 - `run_refinement_pipeline`
 
-Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `payload_input`으로 전달하면 서버가 파일 경로 접근 없이 평가/개선을 수행합니다.
-`payload_input.user_input`은 기본적으로 필수(현재 Copilot 채팅 입력값 전달 권장)이며, 필요 시 `require_user_input=false`로 로그 기반 추론을 허용할 수 있습니다.
-`run_refinement_pipeline`은 `payload_input.max_iters`로 iteration 수를 오버라이드할 수 있습니다.
+If Copilot reads files such as `definition.py`, `logs/*`, and `ground_truth*` and forwards them as `payload_input`, the server can evaluate/refine without local file path access.
+`payload_input.user_input` is required by default (recommended: pass current Copilot chat input). Set `require_user_input=false` only when log-based inference is intended.
+`run_refinement_pipeline` supports overriding iterations via `payload_input.max_iters`.
 
-`run_refinement_pipeline` 예시:
+`run_refinement_pipeline` example:
 
 ```json
 {
   "payload_input": {
     "workspace": "remote-repo",
-    "user_input": "배포 실패 원인 요약해줘",
+    "user_input": "Summarize the deployment failure cause.",
     "definition_py_content": "SYSTEM_PROMPT = \"You are an agent ...\"",
-    "logs": "[{\"role\":\"user\",\"content\":\"배포 실패 원인 요약해줘\"},{\"role\":\"assistant\",\"content\":\"...\"}]",
-    "ground_truth_content": "{\"ground_truth\":\"마이그레이션 누락이 원인\"}"
+    "logs": "[{\"role\":\"user\",\"content\":\"Summarize the deployment failure cause.\"},{\"role\":\"assistant\",\"content\":\"...\"}]",
+    "ground_truth_content": "{\"ground_truth\":\"Missing migration caused the failure\"}"
   }
 }
 ```
 
-외부 Copilot에서 자주 보내는 `context` 기반 payload도 지원합니다:
+`context`-based payloads from external Copilot clients are also supported:
 
 ```json
 {
@@ -146,14 +146,14 @@ Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `p
 }
 ```
 
-호환 매핑:
-- `context.current_system_prompts` -> 내부 `prompt_sources`로 자동 변환
-- `context.user_input` -> `payload_input.user_input` 대체 입력으로 사용
-- `context.ground_truth`, `context.ground_truth_content`, `context.logs`, `context.log_sources` -> 동일 의미로 fallback 처리
+Compatibility mappings:
+- `context.current_system_prompts` -> auto-converted to internal `prompt_sources`
+- `context.user_input` -> fallback source for `payload_input.user_input`
+- `context.ground_truth`, `context.ground_truth_content`, `context.logs`, `context.log_sources` -> same-meaning fallback fields
 
-멀티 에이전트 레포처럼 프롬프트가 여러 파일에 분산된 경우:
-- `prompt_sources`(또는 `files`) 배열로 파일 내용들을 함께 전달
-- 서버가 각 파일에서 시스템 프롬프트 후보를 추출하고 점수화해서 최적 후보를 선택
+For multi-agent repos with prompts split across files:
+- Pass prompt file contents through `prompt_sources` (or `files`)
+- The server extracts candidate system prompts per file, scores them, and picks the best one
 
 ```json
 {
@@ -162,7 +162,7 @@ Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `p
       {"path": "agents/a/definition.py", "content": "SYSTEM_PROMPT = \"You are Agent A ...\""},
       {"path": "agents/b/reviewer.ts", "content": "export const systemPrompt = `You are Agent B ...`"}
     ],
-    "user_input": "워크플로우를 분석해줘",
+    "user_input": "Analyze this workflow.",
     "log_sources": [
       {"path": "logs/old.json", "modified_at": "2026-02-01T10:00:00Z", "content": "[{\"role\":\"user\",\"content\":\"old\"}]"},
       {"path": "logs/new.json", "modified_at": "2026-02-01T10:10:00Z", "content": "[{\"role\":\"user\",\"content\":\"new\"}]"}
@@ -171,7 +171,7 @@ Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `p
 }
 ```
 
-### VS Code `mcp.json` 예시
+### VS Code `mcp.json` example
 
 ```json
 {
@@ -184,7 +184,7 @@ Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `p
 }
 ```
 
-### VS Code 원격 HTTP MCP 예시
+### VS Code remote HTTP MCP example
 
 ```json
 {
@@ -200,43 +200,43 @@ Copilot이 `definition.py`, `logs/*`, `ground_truth*` 파일 내용을 읽어 `p
 }
 ```
 
-참고:
-- URL은 `0.0.0.0`가 아니라 클라이언트에서 실제로 접근 가능한 주소를 사용해야 합니다.
-- HTTP 서버는 stateless 모드로 띄우는 것을 권장합니다.
+Notes:
+- Use a client-reachable host in the URL, not `0.0.0.0`.
+- Stateless HTTP mode is recommended.
 
-### 외부 레포에서 이 MCP 사용
+### Using this MCP from an external repo
 
-외부 에이전트 레포에서 Copilot이 이 서버를 호출하려면:
+To call this server from another agent repo:
 
-1. 이 레포에서 서버 실행 준비
-: `.venv` 생성 + `pip install -e ".[mcp]"`, `.env` 설정 완료
+1. Prepare this repo for server execution
+: Create `.venv`, run `pip install -e ".[mcp]"`, and set `.env`
 
-2. 외부 레포의 `mcp.json`에 절대 경로 등록
-: `samples/mcp.external.example.json`의 `command`를 실제 경로로 교체
+2. Register absolute path in external repo `mcp.json`
+: Replace `command` in `samples/mcp.external.example.json` with your local path
 
-3. 외부 레포 Copilot에서 MCP tool 호출
-: `discover_case_input`으로 입력 확인 후 `run_refinement_pipeline` 실행
+3. Invoke tools from external Copilot
+: Call `discover_case_input`, then run `run_refinement_pipeline`
 
-4. Copilot이 외부 레포 파일을 읽어 payload 전달
-: `prompt_sources`, `log_sources`, `ground_truth_content`, `user_input`를 `payload_input`으로 전달
+4. Have Copilot pass source files through payload
+: Forward `prompt_sources`, `log_sources`, `ground_truth_content`, and `user_input` in `payload_input`
 
-참고:
-- `run_refinement_pipeline`은 프롬프트를 개선하지만 외부 에이전트를 자동 재실행하지 않습니다.
-- 개선 효과를 보려면 외부 에이전트를 재실행해 새 로그를 만들어 다시 평가해야 합니다.
-- 샘플 파일:
-- `samples/mcp.external.example.json` (로컬 stdio/command)
-- `samples/mcp.remote.http.example.json` (원격 HTTP URL)
-- `samples/payload.resume_assistant.context.json` (`context.current_system_prompts` 기반 payload 예시)
+Notes:
+- `run_refinement_pipeline` improves prompts but does not automatically re-run your external agent.
+- Re-run the external agent to produce fresh logs, then evaluate again.
+- Sample files:
+- `samples/mcp.external.example.json` (local stdio/command)
+- `samples/mcp.remote.http.example.json` (remote HTTP URL)
+- `samples/payload.resume_assistant.context.json` (`context.current_system_prompts` payload example)
 
-## Docker 배포(원격 공유)
+## Docker Deployment (Remote Sharing)
 
-이미지 빌드:
+Build image:
 
 ```bash
 docker build -t copilot-prompt-refiner-mcp:latest .
 ```
 
-컨테이너 실행(Streamable HTTP):
+Run container (Streamable HTTP):
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -252,44 +252,45 @@ docker run --rm -p 8080:8080 \
   copilot-prompt-refiner-mcp:latest
 ```
 
-## Microsoft Agent Framework 연동
+## Microsoft Agent Framework Integration
 
-`src/copilot_prompt_refiner/agents/microsoft_agent_framework.py`의 `MicrosoftAgentFrameworkRuntime`는 Azure OpenAI를 직접 호출합니다.
+`MicrosoftAgentFrameworkRuntime` in `src/copilot_prompt_refiner/agents/microsoft_agent_framework.py` calls Azure OpenAI directly.
 
-- `PROMPT_REFINER_USE_MAF`: MAF 사용 여부 (기본 `true`)
-- `PROMPT_REFINER_STRICT_MAF`: MAF 필수 모드 (기본 `true`)
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI 엔드포인트
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API 키
-- `OPENAI_API_VERSION`: API 버전 (예: `2024-10-21`)
-- `AZURE_OPENAI_MODEL`: 모델 이름
-- `AZURE_OPENAI_SSL_VERIFY`: TLS 인증서 검증 여부 (기본 `true`)
-- `AZURE_OPENAI_CA_BUNDLE`: 사내/커스텀 CA 번들 경로 (옵션)
+- `PROMPT_REFINER_USE_MAF`: enable MAF (default `true`)
+- `PROMPT_REFINER_STRICT_MAF`: strict MAF mode (default `true`)
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint
+- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key
+- `OPENAI_API_VERSION`: API version (for example `2024-10-21`)
+- `AZURE_OPENAI_MODEL`: model name
+- `AZURE_OPENAI_SSL_VERIFY`: TLS certificate verification (default `true`)
+- `AZURE_OPENAI_CA_BUNDLE`: custom/internal CA bundle path (optional)
 
-하위 호환:
-- 기존 `MAF_ENDPOINT`, `MAF_API_KEY`, `MAF_API_VERSION`, `MAF_MODEL`도 fallback으로 지원합니다.
+Backward compatibility:
+- `MAF_ENDPOINT`, `MAF_API_KEY`, `MAF_API_VERSION`, and `MAF_MODEL` are still supported as fallback env vars.
 
-파이프라인 기본 동작은 MAF Judge + MAF Refine를 사용합니다.
-로컬 휴리스틱 모드로만 실행하려면 `PROMPT_REFINER_USE_MAF=false`로 설정하세요.
+Default pipeline behavior uses both MAF Judge and MAF Refine.
+To run only local heuristic mode, set `PROMPT_REFINER_USE_MAF=false`.
 
-Judge 출력은 구조화된 필드를 포함합니다:
-- `per_model_reviews`: 모델별 점수(0~10), 위반 여부, 실패 태그, 개선 제안
-- `failure_cases`: 실패 유형/근거/재현 입력·출력/요구 수정/성공 조건
-- `prioritized_actions`: Refine가 바로 적용할 우선순위 액션
-- `disagreement_flag`: 모델 간 점수 불일치가 큰 경우 tie-breaker 판정 여부
+Judge output includes structured fields:
+- `per_model_reviews`: per-model score (0-10), violation flag, failure tags, improvement suggestions
+- `failure_cases`: failure type/evidence/repro input-output/required fix/success criteria
+- `prioritized_actions`: actions Refine can apply directly
+- `disagreement_flag`: indicates whether tie-breaker logic was needed due to model disagreement
 
-## 트러블슈팅
+## Troubleshooting
 - `Could not infer system_prompt`
-  - `payload_input.system_prompt`를 명시하거나, `prompt_sources`/`context.current_system_prompts`를 전달하세요.
+  - Provide `payload_input.system_prompt`, or pass `prompt_sources` / `context.current_system_prompts`.
 - `user_input is required`
-  - `payload_input.user_input`을 전달하거나 `require_user_input=false` + user 로그(`logs`/`log_sources`)를 함께 전달하세요.
+  - Pass `payload_input.user_input`, or set `require_user_input=false` with user logs (`logs`/`log_sources`).
 - `[SSL: CERTIFICATE_VERIFY_FAILED]`
-  - 우선 `AZURE_OPENAI_CA_BUNDLE`에 조직의 CA 번들을 설정해 재시도하세요.
-  - 임시 점검용으로만 `AZURE_OPENAI_SSL_VERIFY=false`를 사용할 수 있습니다(운영 비권장).
-  - Azure 경로 장애 중에도 MCP 도구 실행을 지속하려면 `PROMPT_REFINER_STRICT_MAF=false`로 설정해 휴리스틱 fallback을 허용하세요.
+  - First set your organization CA bundle via `AZURE_OPENAI_CA_BUNDLE` and retry.
+  - Use `AZURE_OPENAI_SSL_VERIFY=false` only for temporary diagnostics.
+  - If Azure path instability should not block MCP tool execution, set `PROMPT_REFINER_STRICT_MAF=false` to allow heuristic fallback.
 
-일부 MCP 클라이언트가 툴 인자를 `{"payload_input": {"payload_input": {...}}}` 형태로 중첩 전달해도 서버가 자동으로 1단계 언랩하여 처리합니다.
+Some MCP clients may nest tool arguments as `{"payload_input": {"payload_input": {...}}}`; the server auto-unwraps one layer.
+If `logs`, `log_sources`, or `ground_truth_content` are missing, the server auto-normalizes them to `{}`, `[]`, and `{}` to keep payload shape stable.
 
-## 샘플 데이터
+## Sample Data
 - `samples/case_example.json`
 - `samples/system_prompt.txt`
 - `samples/mcp.external.example.json`

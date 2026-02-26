@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import ssl
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +28,13 @@ class AzureOpenAIRequestError(RuntimeError):
         self.response_json = response_json or {}
 
 
+def _as_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
 def _as_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -47,16 +55,20 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
     ca_bundle_path: str | None = None
 
     def __post_init__(self) -> None:
-        self.endpoint = self.endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("MAF_ENDPOINT")
-        self.api_key = self.api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("MAF_API_KEY")
+        self.endpoint = _as_optional_text(
+            self.endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("MAF_ENDPOINT")
+        )
+        self.api_key = _as_optional_text(
+            self.api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("MAF_API_KEY")
+        )
         self.api_version = (
-            self.api_version
+            _as_optional_text(self.api_version)
             or os.getenv("OPENAI_API_VERSION")
             or os.getenv("AZURE_OPENAI_API_VERSION")
             or os.getenv("MAF_API_VERSION")
             or "2024-10-21"
         )
-        self.model = (
+        self.model = _as_optional_text(
             self.model
             or os.getenv("AZURE_OPENAI_MODEL")
             or os.getenv("MAF_MODEL", "gpt-4.1-mini")
@@ -98,6 +110,15 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
             raise RuntimeError(
                 "Azure OpenAI runtime is not fully configured. "
                 f"Missing: {joined}"
+            )
+
+        assert self.endpoint is not None
+        parsed_endpoint = parse.urlparse(self.endpoint)
+        if parsed_endpoint.scheme not in {"https", "http"} or not parsed_endpoint.hostname:
+            raise RuntimeError(
+                "AZURE_OPENAI_ENDPOINT must be a valid absolute URL including scheme and host. "
+                f"Current value: {self.endpoint!r}. "
+                "Example: https://your-resource.openai.azure.com/"
             )
 
     def _build_chat_completions_urls(self) -> list[str]:
@@ -149,6 +170,7 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
         last_http_detail = ""
         last_http_route = ""
         last_url_error: error.URLError | None = None
+        last_url_route = ""
         for url in urls:
             req = request.Request(
                 url,
@@ -191,6 +213,7 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
                 ) from exc
             except error.URLError as exc:
                 last_url_error = exc
+                last_url_route = url
                 continue
 
         if raw is None:
@@ -213,8 +236,19 @@ class MicrosoftAgentFrameworkRuntime(TextGenerationRuntime):
                     response_json=parsed_json,
                 ) from last_http_error
             if last_url_error is not None:
+                reason = last_url_error.reason
+                route_msg = f" (route: {last_url_route})" if last_url_route else ""
+                if isinstance(reason, socket.gaierror):
+                    host = parse.urlparse(last_url_route).hostname if last_url_route else None
+                    if host:
+                        raise AzureOpenAIRequestError(
+                            message=(
+                                "Azure OpenAI request failed: DNS lookup failed for "
+                                f"{host!r}{route_msg}. Original error: {reason}"
+                            ),
+                        ) from last_url_error
                 raise AzureOpenAIRequestError(
-                    message=f"Azure OpenAI request failed: {last_url_error.reason}",
+                    message=f"Azure OpenAI request failed{route_msg}: {reason}",
                 ) from last_url_error
             raise AzureOpenAIRequestError(
                 message="Azure OpenAI request failed: no response received."

@@ -23,6 +23,7 @@ class RefineAgent:
         self.max_actions = max_actions
 
     def refine(self, case: AgentCase, judge_result: JudgeResult) -> PromptRevision:
+        """Apply Judge findings to produce a revised prompt with traceable patch notes."""
         selected_actions = self._select_actions(judge_result)
         targeted_failures = [item.linked_failure_type for item in selected_actions]
         action_texts = [item.action for item in selected_actions]
@@ -78,6 +79,7 @@ class RefineAgent:
         judge_result: JudgeResult,
         selected_actions: list[PrioritizedAction],
     ) -> tuple[str, list[str]]:
+        """Call LLM runtime with compact Judge context and parse strict JSON output."""
         action_lines = self._compact_action_lines(selected_actions)
         low_scoring_categories = self._low_scoring_categories(judge_result)
         verdict_context = self._verdict_context(judge_result)
@@ -161,6 +163,7 @@ class RefineAgent:
         judge_result: JudgeResult,
         selected_actions: list[PrioritizedAction],
     ) -> PromptRevision:
+        """Deterministic fallback patcher used when runtime is unavailable or filtered."""
         prompt = case.system_prompt.strip()
         lower_prompt = prompt.lower()
         patch_notes: list[str] = []
@@ -255,6 +258,7 @@ class RefineAgent:
         )
 
     def _select_actions(self, judge_result: JudgeResult) -> list[PrioritizedAction]:
+        """Prefer prioritized actions from Judge; fallback to legacy recommendations."""
         if judge_result.prioritized_actions:
             return judge_result.prioritized_actions[: self.max_actions]
 
@@ -458,6 +462,7 @@ class RefineAgent:
         return "\n".join(lines)
 
     def _parse_refine_response(self, raw: str) -> tuple[str, str]:
+        """Parse runtime JSON response and return refined prompt plus summary text."""
         parsed = self._extract_json_object(raw)
         if parsed is None:
             return raw.strip(), ""

@@ -28,10 +28,10 @@ def test_pipeline_runs_and_refines_prompt() -> None:
 def test_judge_returns_structured_outputs() -> None:
     case = build_case(
         system_prompt="You are an assistant.",
-        user_input="JSON으로 요약해줘",
+        user_input="Summarize this in JSON.",
         logs=[
-            {"role": "user", "content": "JSON으로 요약해줘"},
-            {"role": "assistant", "content": "일반 텍스트 응답"},
+            {"role": "user", "content": "Summarize this in JSON."},
+            {"role": "assistant", "content": "Plain text response"},
         ],
         workspace=".",
     )
@@ -100,7 +100,7 @@ class _JsonRefineRuntime:
 def test_refine_falls_back_on_content_filter_even_in_strict_mode() -> None:
     case = build_case(
         system_prompt="You are an assistant.",
-        user_input="JSON으로 응답해줘",
+        user_input="Respond in JSON.",
         workspace=".",
     )
     judge = JudgeResult(
@@ -121,7 +121,7 @@ def test_refine_falls_back_on_content_filter_even_in_strict_mode() -> None:
 def test_refine_retries_with_compact_prompt_on_content_filter() -> None:
     case = build_case(
         system_prompt="You are an assistant.",
-        user_input="JSON으로 응답해줘",
+        user_input="Respond in JSON.",
         workspace=".",
     )
     judge = JudgeResult(
@@ -144,7 +144,7 @@ def test_refine_retries_with_compact_prompt_on_content_filter() -> None:
 def test_refine_parses_strict_json_runtime_response() -> None:
     case = build_case(
         system_prompt="You are an assistant.",
-        user_input="JSON으로 응답해줘",
+        user_input="Respond in JSON.",
         workspace=".",
     )
     judge = JudgeResult(
@@ -163,7 +163,7 @@ def test_refine_parses_strict_json_runtime_response() -> None:
 def test_refine_skips_patch_when_growth_budget_is_too_small() -> None:
     case = build_case(
         system_prompt="Short prompt.",
-        user_input="JSON으로 응답해줘",
+        user_input="Respond in JSON.",
         workspace=".",
     )
     judge = JudgeResult(

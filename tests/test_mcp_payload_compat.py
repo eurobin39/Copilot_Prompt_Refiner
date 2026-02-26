@@ -52,3 +52,17 @@ def test_to_payload_case_supports_nested_payload_input_wrapper() -> None:
 
     assert case.user_input == "Nested wrapper input"
     assert "resume_writer" in case.system_prompt
+
+
+def test_to_payload_case_auto_fills_empty_payload_shape_slots() -> None:
+    case = _to_payload_case(
+        {
+            "system_prompt": "You are a prompt refiner.",
+            "user_input": "Check payload shape",
+        }
+    )
+
+    payload_shape = case.metadata.get("payload_shape", {})
+    assert payload_shape.get("logs") == "auto_filled"
+    assert payload_shape.get("log_sources") == "auto_filled"
+    assert payload_shape.get("ground_truth_content") == "auto_filled"

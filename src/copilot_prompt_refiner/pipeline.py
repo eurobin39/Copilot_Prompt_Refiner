@@ -40,6 +40,7 @@ class PromptRefinementPipeline:
         strict_maf: bool | None = None,
         max_iters: int | None = None,
     ) -> "PromptRefinementPipeline":
+        """Build a pipeline from env/config defaults with optional runtime overrides."""
         load_dotenv()
         config = RuntimeConfig.from_env()
 
@@ -96,13 +97,16 @@ class PromptRefinementPipeline:
         return cls(judge_agent=judge, refine_agent=refine, max_iters=resolved_max_iters)
 
     def evaluate(self, case: AgentCase, candidate_prompt: str | None = None) -> JudgeResult:
+        """Score a prompt candidate and return a structured Judge verdict."""
         return self.judge_agent.judge(case, candidate_prompt=candidate_prompt)
 
     def refine(self, case: AgentCase) -> PromptRevision:
+        """Run one-pass judge+refine and return only the prompt revision."""
         judge_result = self.evaluate(case)
         return self.refine_agent.refine(case, judge_result)
 
     def run(self, case: AgentCase, max_iters: int | None = None) -> PipelineResult:
+        """Iterate evaluate/refine until pass threshold or max iteration budget is reached."""
         iter_limit = max(1, max_iters if max_iters is not None else self.max_iters)
         current_prompt = case.system_prompt
         traces: list[IterationTrace] = []
@@ -163,6 +167,7 @@ class PromptRefinementPipeline:
         )
 
     def _case_with_prompt(self, case: AgentCase, prompt: str) -> AgentCase:
+        """Clone a case while swapping only the candidate system prompt."""
         return AgentCase(
             case_id=case.case_id,
             system_prompt=prompt,
@@ -174,6 +179,7 @@ class PromptRefinementPipeline:
         )
 
     def _identity_revision(self, prompt: str) -> PromptRevision:
+        """Return a no-op revision used before any refinement is applied."""
         return PromptRevision(
             original_prompt=prompt,
             refined_prompt=prompt,
