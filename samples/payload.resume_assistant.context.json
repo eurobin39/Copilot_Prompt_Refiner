@@ -1,6 +1,8 @@
 {
   "payload_input": {
     "user_input": "Please improve the system prompts for Resume Assistant agents: 1) resume_info_collector, 2) resume_job_analyzer, 3) resume_writer, 4) resume_reviewer.",
+    "logs": null,
+    "ground_truth_content": null,
     "context": {
       "project": "Resume Assistant",
       "agent_types": [

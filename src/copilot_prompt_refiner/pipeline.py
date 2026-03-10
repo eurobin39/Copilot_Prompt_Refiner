@@ -3,8 +3,8 @@ from __future__ import annotations
 from copilot_prompt_refiner.agents.microsoft_agent_framework import (
     MicrosoftAgentFrameworkRuntime,
 )
-from copilot_prompt_refiner.agents.judge_agent import JudgeAgent
-from copilot_prompt_refiner.agents.refine_agent import RefineAgent
+from copilot_prompt_refiner.agents.judge import JudgeAgent
+from copilot_prompt_refiner.agents.refine import RefineAgent
 from copilot_prompt_refiner.config import RuntimeConfig, load_dotenv
 from copilot_prompt_refiner.evaluators.heuristic import (
     GroundTruthAlignmentEvaluator,

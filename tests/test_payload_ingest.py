@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -95,3 +97,77 @@ def test_build_case_from_payload_picks_latest_log_source_for_inference() -> None
     assert case.user_input == "latest input"
     discovery = case.metadata.get("discovery", {})
     assert str(discovery.get("log_source", "")).endswith("logs/new.json")
+
+
+def test_build_case_from_payload_prefers_agent_related_workspace_logs_and_ground_truth(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path
+    (workspace / "logs").mkdir(parents=True, exist_ok=True)
+    (workspace / "ground_truth").mkdir(parents=True, exist_ok=True)
+
+    related_log = workspace / "logs" / "resume_writer.chat.json"
+    unrelated_log = workspace / "logs" / "general.chat.json"
+    related_log.write_text(
+        '[{"role":"user","content":"Improve resume writer tone."}]',
+        encoding="utf-8",
+    )
+    unrelated_log.write_text(
+        '[{"role":"user","content":"Unrelated generic task."}]',
+        encoding="utf-8",
+    )
+
+    related_gt = workspace / "ground_truth" / "resume_writer_ground_truth.json"
+    unrelated_gt = workspace / "ground_truth" / "general_ground_truth.json"
+    related_gt.write_text(
+        '{"ground_truth":"Resume writer should use concise, quantified impact bullets."}',
+        encoding="utf-8",
+    )
+    unrelated_gt.write_text(
+        '{"ground_truth":"Generic fallback guidance."}',
+        encoding="utf-8",
+    )
+
+    now = 1_730_000_000
+    os.utime(related_log, (now - 100, now - 100))
+    os.utime(related_gt, (now - 100, now - 100))
+    os.utime(unrelated_log, (now, now))
+    os.utime(unrelated_gt, (now, now))
+
+    case = build_case_from_payload(
+        workspace=str(workspace),
+        prompt_sources=[
+            {
+                "path": "agents/resume_writer/definition.py",
+                "content": 'SYSTEM_PROMPT = "You are resume_writer agent."',
+            }
+        ],
+        require_user_input=False,
+    )
+
+    assert case.user_input == "Improve resume writer tone."
+    assert "quantified impact bullets" in (case.ground_truth or "")
+    discovery = case.metadata.get("discovery", {})
+    assert "resume_writer.chat.json" in str(discovery.get("log_source", ""))
+    assert "resume_writer_ground_truth.json" in str(discovery.get("ground_truth_source", ""))
+
+
+def test_build_case_from_payload_works_when_related_artifacts_are_missing(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path
+    case = build_case_from_payload(
+        workspace=str(workspace),
+        prompt_sources=[
+            {
+                "path": "agents/resume_reviewer/definition.py",
+                "content": 'SYSTEM_PROMPT = "You are resume_reviewer agent."',
+            }
+        ],
+        user_input="Review this prompt for consistency.",
+        context_files=["agents/resume_reviewer/ground_truth.json", "logs/resume_reviewer.json"],
+    )
+
+    assert case.user_input == "Review this prompt for consistency."
+    assert case.ground_truth is None
+    assert case.logs == []

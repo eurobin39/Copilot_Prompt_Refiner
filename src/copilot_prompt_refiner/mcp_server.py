@@ -2,10 +2,42 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Any
+from typing import Any, TypedDict
 
 from copilot_prompt_refiner.ingest.copilot import build_case_from_payload
 from copilot_prompt_refiner.pipeline import PromptRefinementPipeline
+
+
+class _EvidencePayloadSchema(TypedDict):
+    """Required evidence keys accepted by MCP tools."""
+
+    logs: Any | None
+    ground_truth_content: Any | None
+
+
+class PayloadInputSchema(_EvidencePayloadSchema, total=False):
+    """Schema used by MCP tools for payload ingestion.
+
+    `logs` and `ground_truth_content` are required-at-shape fields but can be
+    `null` to represent missing files/artifacts.
+    """
+
+    workspace: str
+    system_prompt: str
+    definition_py_content: str
+    prompt_sources: Any
+    files: Any
+    user_input: str
+    copilot_user_input: str
+    require_user_input: bool | str | int
+    ground_truth: str
+    log_sources: Any
+    logs_files: Any
+    context_files: list[str]
+    case_id: str
+    metadata: dict[str, Any]
+    context: dict[str, Any]
+    max_iters: int | str | float
 
 
 def _as_bool(value: Any, default: bool = True) -> bool:
@@ -133,9 +165,9 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> tuple[dict[str, Any], d
     normalized = dict(payload)
     shape_status: dict[str, str] = {}
     defaults: dict[str, Any] = {
-        "logs": {},
+        "logs": None,
+        "ground_truth_content": None,
         "log_sources": [],
-        "ground_truth_content": {},
     }
 
     for key, default_value in defaults.items():
@@ -224,7 +256,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _to_payload_case(payload: dict[str, Any] | None):
+def _to_payload_case(payload: PayloadInputSchema | dict[str, Any] | None):
     """Normalize incoming tool payload and resolve a unified `AgentCase`.
 
     This function handles field aliases, nested payload wrappers, and context
@@ -353,7 +385,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     @mcp.tool()
-    def discover_case_input(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+    def discover_case_input(payload_input: PayloadInputSchema | None = None) -> dict[str, Any]:
         """Inspect payload resolution results without running judge/refine logic.
 
         Useful for client-side debugging because it shows resolved prompt/input
@@ -373,7 +405,7 @@ def main(argv: list[str] | None = None) -> None:
         }
 
     @mcp.tool()
-    def evaluate_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+    def evaluate_prompt(payload_input: PayloadInputSchema | None = None) -> dict[str, Any]:
         """Return Judge evaluation artifacts for a resolved payload case.
 
         This is the read-only scoring endpoint for workflows that want verdicts
@@ -384,7 +416,7 @@ def main(argv: list[str] | None = None) -> None:
         return result.to_dict()
 
     @mcp.tool()
-    def refine_prompt(payload_input: dict[str, Any] | None = None) -> dict[str, Any]:
+    def refine_prompt(payload_input: PayloadInputSchema | None = None) -> dict[str, Any]:
         """Run a single judge+refine pass and return the resulting prompt revision.
 
         Use this endpoint when iterative convergence is unnecessary and a single
@@ -396,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
 
     @mcp.tool()
     def run_refinement_pipeline(
-        payload_input: dict[str, Any] | None = None,
+        payload_input: PayloadInputSchema | None = None,
     ) -> dict[str, Any]:
         """Run iterative evaluate/refine loop and return full pipeline artifacts.
 

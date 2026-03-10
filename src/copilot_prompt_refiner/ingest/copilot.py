@@ -39,6 +39,24 @@ LOG_DISCOVERY_PATTERNS = (
     "**/*copilot*.json",
 )
 
+GROUND_TRUTH_DISCOVERY_PATTERNS = (
+    "**/ground_truth*.json",
+    "**/ground_truth*.txt",
+    "**/ground_truth*.md",
+    "**/*ground*truth*.json",
+    "**/*ground*truth*.txt",
+    "**/*ground*truth*.md",
+    "**/*expected*.json",
+    "**/*expected*.txt",
+    "**/*expected*.md",
+    "**/*golden*.json",
+    "**/*golden*.txt",
+    "**/*golden*.md",
+    "**/*answer*.json",
+    "**/*answer*.txt",
+    "**/*answer*.md",
+)
+
 SKIP_DIR_NAMES = {
     ".git",
     ".venv",
@@ -47,6 +65,35 @@ SKIP_DIR_NAMES = {
     ".pytest_cache",
     "dist",
     "build",
+}
+
+HINT_TOKEN_STOP_WORDS = {
+    "agent",
+    "agents",
+    "prompt",
+    "prompts",
+    "system",
+    "definition",
+    "definitions",
+    "context",
+    "workspace",
+    "logs",
+    "log",
+    "ground",
+    "truth",
+    "expected",
+    "golden",
+    "answer",
+    "messages",
+    "message",
+    "json",
+    "txt",
+    "md",
+    "py",
+    "ts",
+    "js",
+    "tsx",
+    "jsx",
 }
 
 
@@ -258,36 +305,114 @@ def _select_latest_log_source(log_sources: Any) -> dict[str, Any] | None:
     return normalized[0]
 
 
-def _discover_latest_log_text(workspace: str | Path) -> tuple[str | None, str | None]:
-    """Discover and read the most recent local log file under workspace.
+def _extract_source_path_from_label(source_label: str | None) -> str | None:
+    """Extract prompt source path from labels like `prompt_sources:<path>:score=<n>`.
 
-    Search skips common build/venv/cache directories and returns both file text
-    and absolute path so metadata can record provenance.
+    Returns `None` when labels are missing or not in expected source format.
+    """
+    if not isinstance(source_label, str):
+        return None
+    if not source_label.startswith("prompt_sources:"):
+        return None
+
+    body = source_label[len("prompt_sources:") :]
+    marker = ":score="
+    split_at = body.rfind(marker)
+    if split_at <= 0:
+        return None
+    return body[:split_at].strip() or None
+
+
+def _tokenize_hint_values(values: list[str]) -> list[str]:
+    """Convert path-like values into normalized hint tokens for file matching.
+
+    Generic tokens are filtered out so matching focuses on agent-specific names.
+    """
+    hints: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for token in re.findall(r"[a-z0-9]+", value.lower()):
+            if len(token) < 3:
+                continue
+            if token in HINT_TOKEN_STOP_WORDS:
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            hints.append(token)
+    return hints
+
+
+def _build_related_hints(
+    *,
+    system_prompt_source: str | None,
+    context_files: list[str] | None,
+) -> list[str]:
+    """Build related-agent hint tokens from resolved prompt source and context files.
+
+    These hints are only used as a preference during auto-discovery and never
+    make missing files a hard failure.
+    """
+    hint_values: list[str] = []
+    source_path = _extract_source_path_from_label(system_prompt_source)
+    if source_path:
+        hint_values.append(source_path)
+    if context_files:
+        hint_values.extend([str(item) for item in context_files if isinstance(item, str)])
+    return _tokenize_hint_values(hint_values)
+
+
+def _is_skipped_workspace_path(path: Path, root: Path) -> bool:
+    """Return whether a candidate workspace path should be ignored for discovery."""
+    try:
+        rel_parts = path.resolve().relative_to(root).parts
+    except ValueError:
+        return True
+    return any(part in SKIP_DIR_NAMES for part in rel_parts)
+
+
+def _path_matches_hints(path: Path, hints: list[str]) -> bool:
+    """Check whether a path text contains at least one related hint token."""
+    if not hints:
+        return False
+    path_lower = str(path).lower()
+    return any(token in path_lower for token in hints)
+
+
+def _discover_latest_log_text(
+    workspace: str | Path,
+    related_hints: list[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Discover and read one log file under workspace with optional hint preference.
+
+    Related hints bias selection toward agent-specific logs when available; if
+    no hint-matching file exists, normal latest-log behavior is preserved.
     """
     root = Path(workspace)
     if not root.exists() or not root.is_dir():
         return None, None
 
     root_resolved = root.resolve()
+    hints = related_hints or []
     best_path: Path | None = None
-    best_mtime = -1.0
+    best_key: tuple[int, float] = (-1, -1.0)
 
     for pattern in LOG_DISCOVERY_PATTERNS:
         for path in root_resolved.glob(pattern):
             if not path.is_file():
                 continue
-            try:
-                rel_parts = path.resolve().relative_to(root_resolved).parts
-            except ValueError:
-                continue
-            if any(part in SKIP_DIR_NAMES for part in rel_parts):
+            if _is_skipped_workspace_path(path, root_resolved):
                 continue
             try:
                 mtime = path.stat().st_mtime
             except OSError:
                 continue
-            if mtime > best_mtime:
-                best_mtime = mtime
+            key = (
+                1 if _path_matches_hints(path, hints) else 0,
+                mtime,
+            )
+            if key > best_key:
+                best_key = key
                 best_path = path
 
     if best_path is None:
@@ -645,14 +770,65 @@ def _extract_ground_truth_from_payload(payload: Any) -> str | None:
     return None
 
 
+def _discover_ground_truth_text(
+    workspace: str | Path,
+    related_hints: list[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Discover one ground-truth file under workspace with optional hint preference.
+
+    Preference favors agent-related filenames when hints exist, while preserving
+    graceful fallback behavior when no matching artifacts are present.
+    """
+    root = Path(workspace)
+    if not root.exists() or not root.is_dir():
+        return None, None
+
+    root_resolved = root.resolve()
+    hints = related_hints or []
+    best_value: str | None = None
+    best_path: Path | None = None
+    best_key: tuple[int, float] = (-1, -1.0)
+
+    for pattern in GROUND_TRUTH_DISCOVERY_PATTERNS:
+        for path in root_resolved.glob(pattern):
+            if not path.is_file():
+                continue
+            if _is_skipped_workspace_path(path, root_resolved):
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8", errors="ignore")
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+
+            extracted = _extract_ground_truth_from_payload(raw)
+            if not extracted:
+                continue
+
+            key = (
+                1 if _path_matches_hints(path, hints) else 0,
+                mtime,
+            )
+            if key > best_key:
+                best_key = key
+                best_value = extracted
+                best_path = path
+
+    if best_value is None or best_path is None:
+        return None, None
+    return best_value, str(best_path.resolve())
+
+
 def _resolve_ground_truth(
     ground_truth: str | None,
     ground_truth_content: Any,
+    workspace: str | Path,
+    related_hints: list[str] | None = None,
 ) -> tuple[str | None, str | None]:
     """Resolve ground truth value and its source label.
 
     Explicit `ground_truth` takes precedence; otherwise extraction is attempted
-    from `ground_truth_content` payload fields.
+    from `ground_truth_content` payload fields and workspace discovery.
     """
     if isinstance(ground_truth, str) and ground_truth.strip():
         return ground_truth.strip(), "input"
@@ -660,6 +836,10 @@ def _resolve_ground_truth(
     extracted = _extract_ground_truth_from_payload(ground_truth_content)
     if extracted:
         return extracted, "payload.ground_truth_content"
+
+    discovered, discovered_path = _discover_ground_truth_text(workspace, related_hints)
+    if discovered:
+        return discovered, f"workspace:{discovered_path}"
 
     return None, None
 
@@ -688,6 +868,7 @@ def _resolve_logs_payload(
     logs: Any,
     log_sources: Any,
     workspace: str | Path,
+    related_hints: list[str] | None = None,
 ) -> tuple[list[MessageLog], str | None]:
     """Resolve logs from direct payload, log sources, or workspace discovery.
 
@@ -707,7 +888,7 @@ def _resolve_logs_payload(
                 f"payload.log_sources:{latest_log_source.get('path')}",
             )
 
-    local_log_text, local_log_path = _discover_latest_log_text(workspace)
+    local_log_text, local_log_path = _discover_latest_log_text(workspace, related_hints)
     if local_log_text:
         parsed_local = load_logs_from_payload(local_log_text)
         if parsed_local:
@@ -781,10 +962,17 @@ def build_case_from_payload(
             "Could not infer system_prompt. Provide system_prompt or prompt_sources/definition_py_content with prompt definitions."
         )
 
+    merged_context = list(dict.fromkeys(context_files or []))
+    related_hints = _build_related_hints(
+        system_prompt_source=system_prompt_source,
+        context_files=merged_context,
+    )
+
     parsed_logs, log_source = _resolve_logs_payload(
         logs=logs,
         log_sources=log_sources,
         workspace=workspace,
+        related_hints=related_hints,
     )
 
     if require_user_input and not (isinstance(user_input, str) and user_input.strip()):
@@ -805,9 +993,9 @@ def build_case_from_payload(
     resolved_ground_truth, ground_truth_source = _resolve_ground_truth(
         ground_truth=ground_truth,
         ground_truth_content=ground_truth_content,
+        workspace=workspace,
+        related_hints=related_hints,
     )
-
-    merged_context = list(dict.fromkeys(context_files or []))
 
     base_metadata: dict[str, Any] = {
         "workspace": str(Path(workspace)),

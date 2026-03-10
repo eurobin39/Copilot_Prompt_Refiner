@@ -112,6 +112,8 @@ Available MCP tools:
 If Copilot reads files such as `definition.py`, `logs/*`, and `ground_truth*` and forwards them as `payload_input`, the server can evaluate/refine without local file path access.
 `payload_input.user_input` is required by default (recommended: pass current Copilot chat input). Set `require_user_input=false` only when log-based inference is intended.
 `run_refinement_pipeline` supports overriding iterations via `payload_input.max_iters`.
+For compatibility, send `payload_input.logs` and `payload_input.ground_truth_content` on every call; use `null` when files are not available.
+When `logs` / `ground_truth_content` are `null`, the server can auto-discover workspace files and prefers paths related to the selected prompt source (for example, multi-agent names in `prompt_sources` / `context_files`). If nothing is found, it continues with graceful fallbacks.
 
 `run_refinement_pipeline` example:
 
@@ -133,6 +135,8 @@ If Copilot reads files such as `definition.py`, `logs/*`, and `ground_truth*` an
 {
   "payload_input": {
     "user_input": "Improve Resume Assistant prompts",
+    "logs": null,
+    "ground_truth_content": null,
     "context": {
       "project": "Resume Assistant",
       "current_system_prompts": {
@@ -163,6 +167,8 @@ For multi-agent repos with prompts split across files:
       {"path": "agents/b/reviewer.ts", "content": "export const systemPrompt = `You are Agent B ...`"}
     ],
     "user_input": "Analyze this workflow.",
+    "logs": null,
+    "ground_truth_content": null,
     "log_sources": [
       {"path": "logs/old.json", "modified_at": "2026-02-01T10:00:00Z", "content": "[{\"role\":\"user\",\"content\":\"old\"}]"},
       {"path": "logs/new.json", "modified_at": "2026-02-01T10:10:00Z", "content": "[{\"role\":\"user\",\"content\":\"new\"}]"}
@@ -288,7 +294,7 @@ Judge output includes structured fields:
   - If Azure path instability should not block MCP tool execution, set `PROMPT_REFINER_STRICT_MAF=false` to allow heuristic fallback.
 
 Some MCP clients may nest tool arguments as `{"payload_input": {"payload_input": {...}}}`; the server auto-unwraps one layer.
-If `logs`, `log_sources`, or `ground_truth_content` are missing, the server auto-normalizes them to `{}`, `[]`, and `{}` to keep payload shape stable.
+If `logs` / `ground_truth_content` are missing, the server auto-normalizes them to `null` (and `log_sources` to `[]`) to keep payload shape stable.
 
 ## Sample Data
 - `samples/case_example.json`

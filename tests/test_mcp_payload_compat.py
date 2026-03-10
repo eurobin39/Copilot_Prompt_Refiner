@@ -66,3 +66,18 @@ def test_to_payload_case_auto_fills_empty_payload_shape_slots() -> None:
     assert payload_shape.get("logs") == "auto_filled"
     assert payload_shape.get("log_sources") == "auto_filled"
     assert payload_shape.get("ground_truth_content") == "auto_filled"
+
+
+def test_to_payload_case_accepts_explicit_null_evidence_fields() -> None:
+    case = _to_payload_case(
+        {
+            "system_prompt": "You are a prompt refiner.",
+            "user_input": "Check payload shape",
+            "logs": None,
+            "ground_truth_content": None,
+        }
+    )
+
+    payload_shape = case.metadata.get("payload_shape", {})
+    assert payload_shape.get("logs") == "normalized_from_null"
+    assert payload_shape.get("ground_truth_content") == "normalized_from_null"
